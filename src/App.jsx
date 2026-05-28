@@ -328,6 +328,24 @@ function getReservationsForEmail(reservations, email) {
     .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
 }
 
+function getGanttBarWidthPercent(durationMinutes, totalMinutes) {
+  const safeTotal = Math.max(Number(totalMinutes || 0), 1);
+  const safeDuration = Math.max(Number(durationMinutes || 0), 0);
+  return (safeDuration / safeTotal) * 100;
+}
+
+function buildGanttTooltip(reservation) {
+  return [
+    "Reserva: " + reservation.id,
+    "Horario: " + reservation.time + "-" + reservation.endTime,
+    "Empresa: " + (reservation.company || "Sin empresa"),
+    "AWB: " + (reservation.awb || "-"),
+    "Matricula: " + (reservation.plate || "-"),
+    "Operacion: " + (reservation.operation || "-"),
+    "Muelle: " + dockName(Number(reservation.dockIndex || 0)),
+  ].join("\n");
+}
+
 function upsertReservationInList(reservations, reservationToSave) {
   const exists = reservations.some((reservation) => reservation.id === reservationToSave.id);
   if (!exists) return reservations.concat(reservationToSave);
@@ -498,6 +516,10 @@ function runBasicTests() {
   console.assert(hasReservationForEmailOnDate([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "A@B.COM", "2026-01-01") === true, "hasReservationForEmailOnDate should detect one active reservation per email and day");
   console.assert(shouldBlockSlotSelection([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "a@b.com", "2026-01-01") === true, "shouldBlockSlotSelection should block slot selection when an active reservation exists for the day");
   console.assert(getReservationsForEmail([{ email: "A@B.COM", date: "2026-01-01", time: "09:00" }], "a@b.com").length === 1, "getReservationsForEmail should return reservations for the logged email");
+  console.assert(Math.round(getGanttBarWidthPercent(30, 720)) === 4, "getGanttBarWidthPercent should use the real slot duration over the visible day");
+  console.assert(getGanttBarWidthPercent(45, 45) === 100, "getGanttBarWidthPercent should fill the available space when duration equals total");
+  console.assert(buildGanttTooltip({ id: "R1", time: "09:00", endTime: "09:30", company: "Empresa", awb: "AWB1", plate: "1234ABC", operation: "Carga", dockIndex: 0 }).includes("Empresa: Empresa"), "buildGanttTooltip should include company details");
+  console.assert(buildGanttTooltip({ id: "R1", time: "09:00", endTime: "09:30", company: "Empresa", awb: "AWB1", plate: "1234ABC", operation: "Carga", dockIndex: 0 }).includes("AWB: AWB1"), "buildGanttTooltip should include AWB details");
   console.assert(upsertReservationInList([{ id: "R1", status: "Confirmada" }], { id: "R1", status: "Cancelada" })[0].status === "Cancelada", "upsertReservationInList should replace an existing reservation");
   console.assert(upsertReservationInList([{ id: "R1" }], { id: "R2" }).length === 2, "upsertReservationInList should add a new reservation");
   console.assert(setReservationStatusInList([{ id: "R1", status: "Confirmada" }], "R1", "Cancelada")[0].status === "Cancelada", "setReservationStatusInList should update reservation status");
@@ -925,13 +947,28 @@ export default function App() {
               })}
               {ganttReservations.filter((reservation) => reservation.dockIndex === dockIndex).map((reservation) => {
                 const left = ((timeToMinutes(reservation.time) - startMinutes) / totalMinutes) * 100;
-                const width = (reservation.duration / totalMinutes) * 100;
+                const width = getGanttBarWidthPercent(reservation.duration, totalMinutes);
+                const tooltip = buildGanttTooltip(reservation);
                 return (
-                  <div key={reservation.id} title={reservation.id + " - " + reservation.plate + " - " + reservation.awb} style={{ position: "absolute", left: left + "%", top: 10, width: Math.max(width, 3) + "%", minWidth: 80, height: 44, borderRadius: 12, background: reservation.operation === "Carga" ? "#dbeafe" : "#dcfce7", border: "1px solid #94a3b8", padding: "6px 8px", overflow: "hidden", fontSize: 12 }}>
-                    <strong>{reservation.time}-{reservation.endTime}</strong>
-                    <div>{reservation.plate}</div>
-                    <div>Muelle {dockName(reservation.dockIndex)}</div>
-                  </div>
+                  <div
+                    key={reservation.id}
+                    title={tooltip}
+                    aria-label={tooltip}
+                    style={{
+                      position: "absolute",
+                      left: left + "%",
+                      top: 8,
+                      width: width + "%",
+                      minWidth: 0,
+                      height: 50,
+                      borderRadius: 10,
+                      background: reservation.operation === "Carga" ? "#dbeafe" : "#dcfce7",
+                      border: "1px solid #94a3b8",
+                      overflow: "hidden",
+                      boxSizing: "border-box",
+                      cursor: "help",
+                    }}
+                  />
                 );
               })}
             </div>
