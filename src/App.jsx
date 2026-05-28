@@ -1,6 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 const initialConfig = {
+  occupancyThresholds: {
+    greenMax: 50,
+    yellowMax: 90,
+    orangeMax: 99,
+  },
   timeRanges: [
     { id: "FR-1", startTime: "08:00", endTime: "12:00", slotMinutes: 30, docks: 4 },
     { id: "FR-2", startTime: "12:00", endTime: "16:00", slotMinutes: 45, docks: 3 },
@@ -38,13 +43,8 @@ function buildSlotsForRange(range) {
   const slotMinutes = Number(range.slotMinutes || 0);
   let current = range.startTime;
 
-  if (!slotMinutes || slotMinutes <= 0) {
-    return slots;
-  }
-
-  if (timeToMinutes(range.endTime) <= timeToMinutes(range.startTime)) {
-    return slots;
-  }
+  if (!slotMinutes || slotMinutes <= 0) return slots;
+  if (timeToMinutes(range.endTime) <= timeToMinutes(range.startTime)) return slots;
 
   while (timeToMinutes(current) < timeToMinutes(range.endTime)) {
     slots.push({
@@ -111,111 +111,116 @@ function isDockAvailable(reservations, reservationId, date, time, dockIndex) {
 
 function findFirstAvailableDock(reservations, date, time, capacity) {
   for (let dockIndex = 0; dockIndex < capacity; dockIndex += 1) {
-    if (isDockAvailable(reservations, "", date, time, dockIndex)) {
-      return dockIndex;
-    }
+    if (isDockAvailable(reservations, "", date, time, dockIndex)) return dockIndex;
   }
   return 0;
 }
 
-function runBasicTests() {
-  console.assert(timeToMinutes("08:30") === 510, "timeToMinutes should convert 08:30 to 510 minutes");
-  console.assert(addMinutes("08:00", 30) === "08:30", "addMinutes should add 30 minutes correctly");
-  console.assert(
-    JSON.stringify(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }).map((slot) => slot.time)) === JSON.stringify(["08:00", "08:30"]),
-    "buildSlots should generate slots up to, but not including, endTime"
-  );
-  console.assert(
-    buildSlots({ timeRanges: [{ id: "T1", startTime: "20:00", endTime: "08:00", slotMinutes: 30, docks: 2 }] }).length === 0,
-    "buildSlots should return an empty array when endTime is before startTime"
-  );
-  console.assert(
-    buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 0, docks: 2 }] }).length === 0,
-    "buildSlots should return an empty array when slotMinutes is zero"
-  );
-  console.assert(
-    buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }, { id: "T2", startTime: "09:00", endTime: "10:00", slotMinutes: 60, docks: 1 }] }).length === 3,
-    "buildSlots should support several ranges with different durations"
-  );
-  console.assert(getMaxDocks({ timeRanges: [{ docks: 2 }, { docks: 5 }] }) === 5, "getMaxDocks should return the highest number of docks");
-  console.assert(dockName(0) === "A" && dockName(3) === "D", "dockName should name docks A, B, C, D");
-  console.assert(escapeCsv('A "test"') === '"A ""test"""', "escapeCsv should escape quotes correctly");
-  console.assert(
-    isDockAvailable([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "R2", "2026-01-01", "09:00", 0) === false,
-    "isDockAvailable should detect an occupied dock in the same slot"
-  );
-  console.assert(
-    findFirstAvailableDock([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "2026-01-01", "09:00", 2) === 1,
-    "findFirstAvailableDock should return the first free dock"
+function isValidEmail(email) {
+  return /^[^ @]+@[^ @]+[.][^ @]+$/.test(String(email || "").trim());
+}
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function generateConfirmationCode() {
+  return "CNF-" + Math.floor(100000 + Math.random() * 900000);
+}
+
+function hasReservationForEmailOnDate(reservations, email, date) {
+  const cleanEmail = normalizeEmail(email);
+  return reservations.some(
+    (reservation) =>
+      normalizeEmail(reservation.email) === cleanEmail &&
+      reservation.date === date &&
+      reservation.status !== "Cancelada"
   );
 }
 
-runBasicTests();
+function dateToIso(date) {
+  return date.toISOString().slice(0, 10);
+}
 
-const initialReservations = [
-  {
-    id: "RSV-1001",
-    date: todayIso(),
-    time: "09:00",
-    plate: "1234ABC",
-    awb: "075-12345678",
-    company: "Transporte Demo",
-    contact: "Carlos Martin",
-    phone: "+34 600 000 001",
-    operation: "Descarga",
-    status: "Confirmada",
-    createdAt: new Date().toLocaleString(),
-    dockIndex: 0,
-  },
-  {
-    id: "RSV-1002",
-    date: todayIso(),
-    time: "09:00",
-    plate: "9876XYZ",
-    awb: "075-87654321",
-    company: "Logistica Norte",
-    contact: "Ana Perez",
-    phone: "+34 600 000 002",
-    operation: "Carga",
-    status: "Confirmada",
-    createdAt: new Date().toLocaleString(),
-    dockIndex: 1,
-  },
-  {
-    id: "RSV-1003",
-    date: todayIso(),
-    time: "12:00",
-    plate: "5555KLM",
-    awb: "075-33334444",
-    company: "Cargo Express",
-    contact: "Luis Gomez",
-    phone: "+34 600 000 003",
-    operation: "Descarga",
-    status: "Confirmada",
-    createdAt: new Date().toLocaleString(),
-    dockIndex: 0,
-  },
-];
+function addDays(isoDate, days) {
+  const date = new Date(isoDate + "T00:00:00");
+  date.setDate(date.getDate() + Number(days || 0));
+  return dateToIso(date);
+}
 
-const s = {
+function getMondayOfWeek(isoDate) {
+  const date = new Date(isoDate + "T00:00:00");
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  return dateToIso(date);
+}
+
+function getWeekDays(isoDate) {
+  const monday = getMondayOfWeek(isoDate);
+  return Array.from({ length: 7 }).map((_, index) => addDays(monday, index));
+}
+
+function countActiveReservationsForDate(reservations, date) {
+  return reservations.filter((reservation) => reservation.date === date && reservation.status !== "Cancelada").length;
+}
+
+function getDailyCapacity(config) {
+  return buildSlots(config).reduce((sum, slot) => sum + Number(slot.docks || 0), 0);
+}
+
+function dayLabelFromIso(isoDate) {
+  const labels = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
+  const date = new Date(isoDate + "T00:00:00");
+  return labels[date.getDay()];
+}
+
+function getOccupancyPercent(used, capacity) {
+  const safeCapacity = Number(capacity || 0);
+  if (safeCapacity <= 0) return 0;
+  return Math.round((Number(used || 0) / safeCapacity) * 100);
+}
+
+function getOccupancyLevel(used, capacity, thresholds) {
+  const percent = getOccupancyPercent(used, capacity);
+  const safeThresholds = thresholds || { greenMax: 50, yellowMax: 90, orangeMax: 99 };
+  if (percent >= 100) return "red";
+  if (percent > Number(safeThresholds.orangeMax || 99)) return "red";
+  if (percent > Number(safeThresholds.yellowMax || 90)) return "orange";
+  if (percent >= Number(safeThresholds.greenMax || 50)) return "yellow";
+  return "green";
+}
+
+function getOccupancyBadgeStyle(used, capacity, thresholds) {
+  const level = getOccupancyLevel(used, capacity, thresholds);
+  const styles = {
+    green: { background: "#dcfce7", color: "#166534" },
+    yellow: { background: "#fef9c3", color: "#854d0e" },
+    orange: { background: "#fed7aa", color: "#9a3412" },
+    red: { background: "#fee2e2", color: "#991b1b" },
+  };
+  return styles[level] || styles.green;
+}
+
+const baseStyles = {
   page: { maxWidth: 1320, margin: "0 auto", padding: 24, fontFamily: "Arial, Helvetica, sans-serif", color: "#172033" },
   hero: { background: "white", borderRadius: 24, padding: 24, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)", display: "flex", justifyContent: "space-between", gap: 24, alignItems: "center", marginBottom: 20, flexWrap: "wrap" },
   card: { background: "white", borderRadius: 24, padding: 24, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)" },
   eyebrow: { margin: "0 0 8px", color: "#64748b", fontSize: 14, fontWeight: 700 },
   heroText: { color: "#64748b", maxWidth: 720 },
   configSummary: { minWidth: 300, background: "#f1f5f9", borderRadius: 18, padding: 16 },
+  modeBar: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" },
   tabs: { display: "flex", gap: 8, background: "white", padding: 8, borderRadius: 18, width: "fit-content", marginBottom: 20, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)", flexWrap: "wrap" },
   tab: { border: 0, background: "transparent", padding: "12px 18px", borderRadius: 14, cursor: "pointer", fontWeight: 700, color: "#475569" },
   activeTab: { background: "#172033", color: "white" },
   gridTwo: { display: "grid", gridTemplateColumns: "minmax(280px, 400px) 1fr", gap: 20 },
   label: { display: "grid", gap: 7, marginTop: 14, fontWeight: 700, color: "#334155" },
-  input: { width: "100%", border: "1px solid #cbd5e1", borderRadius: 12, padding: 12, background: "white", color: "#172033" },
+  input: { width: "100%", border: "1px solid #cbd5e1", borderRadius: 12, padding: 12, background: "white", color: "#172033", boxSizing: "border-box" },
   sectionHeader: { display: "flex", justifyContent: "space-between", gap: 20, alignItems: "end", marginBottom: 20, flexWrap: "wrap" },
   muted: { color: "#64748b" },
   slotGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 },
   slot: { border: "1px solid #cbd5e1", background: "white", borderRadius: 18, padding: 16, cursor: "pointer", textAlign: "left" },
   slotSelected: { background: "#172033", color: "white", borderColor: "#172033" },
-  slotFull: { background: "#f1f5f9", color: "#94a3b8", cursor: "not-allowed" },
   confirmBox: { marginTop: 20, background: "#f1f5f9", borderRadius: 18, padding: 18, display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" },
   primaryButton: { border: 0, borderRadius: 12, padding: "12px 16px", fontWeight: 700, cursor: "pointer", background: "#172033", color: "white" },
   disabledButton: { background: "#94a3b8", cursor: "not-allowed" },
@@ -239,15 +244,118 @@ const s = {
   ganttRow: { display: "grid", gridTemplateColumns: "90px 1fr", minWidth: 900, borderBottom: "1px solid #e2e8f0" },
 };
 
+function useIsMobile() {
+  const getInitialValue = () => {
+    if (typeof window === "undefined") return false;
+    return window.innerWidth <= 760;
+  };
+
+  const [isMobile, setIsMobile] = useState(getInitialValue);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handleResize = () => setIsMobile(window.innerWidth <= 760);
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  return isMobile;
+}
+
+function createResponsiveStyles(isMobile) {
+  if (!isMobile) return baseStyles;
+
+  return {
+    ...baseStyles,
+    page: { ...baseStyles.page, padding: 12, maxWidth: "100%" },
+    hero: { ...baseStyles.hero, padding: 18, borderRadius: 18, alignItems: "stretch" },
+    card: { ...baseStyles.card, padding: 16, borderRadius: 18 },
+    configSummary: { ...baseStyles.configSummary, minWidth: "100%" },
+    modeBar: { ...baseStyles.modeBar, width: "100%", display: "grid", gridTemplateColumns: "1fr" },
+    tabs: { ...baseStyles.tabs, width: "100%", display: "grid", gridTemplateColumns: "1fr", gap: 8, boxSizing: "border-box" },
+    tab: { ...baseStyles.tab, width: "100%" },
+    gridTwo: { ...baseStyles.gridTwo, gridTemplateColumns: "1fr", gap: 14 },
+    label: { ...baseStyles.label, width: "100%" },
+    input: { ...baseStyles.input, minHeight: 44 },
+    sectionHeader: { ...baseStyles.sectionHeader, alignItems: "stretch" },
+    slotGrid: { ...baseStyles.slotGrid, gridTemplateColumns: "1fr", gap: 10 },
+    slot: { ...baseStyles.slot, padding: 14, borderRadius: 16 },
+    confirmBox: { ...baseStyles.confirmBox, alignItems: "stretch", padding: 14 },
+    primaryButton: { ...baseStyles.primaryButton, width: "100%", minHeight: 44 },
+    secondaryButton: { ...baseStyles.secondaryButton, width: "100%", minHeight: 44 },
+    dangerButton: { ...baseStyles.dangerButton, width: "100%", minHeight: 44 },
+    stats: { ...baseStyles.stats, gridTemplateColumns: "1fr", gap: 10 },
+    tableHeader: { ...baseStyles.tableHeader, gridTemplateColumns: "1fr", gap: 6 },
+    tableRow: { ...baseStyles.tableRow, gridTemplateColumns: "1fr", gap: 8 },
+    reservationItem: { ...baseStyles.reservationItem, display: "grid", gridTemplateColumns: "1fr", gap: 10 },
+    configGrid: { ...baseStyles.configGrid, gridTemplateColumns: "1fr", gap: 10 },
+    rangeCard: { ...baseStyles.rangeCard, padding: 14, borderRadius: 16 },
+    ganttWrapper: { ...baseStyles.ganttWrapper, overflowX: "auto", WebkitOverflowScrolling: "touch" },
+    ganttHeader: { ...baseStyles.ganttHeader, minWidth: 760, gridTemplateColumns: "80px 1fr" },
+    ganttRow: { ...baseStyles.ganttRow, minWidth: 760, gridTemplateColumns: "80px 1fr" },
+  };
+}
+
+function runBasicTests() {
+  console.assert(timeToMinutes("08:30") === 510, "timeToMinutes should convert 08:30 to 510 minutes");
+  console.assert(addMinutes("08:00", 30) === "08:30", "addMinutes should add 30 minutes correctly");
+  console.assert(
+    JSON.stringify(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }).map((slot) => slot.time)) === JSON.stringify(["08:00", "08:30"]),
+    "buildSlots should generate slots up to, but not including, endTime"
+  );
+  console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "20:00", endTime: "08:00", slotMinutes: 30, docks: 2 }] }).length === 0, "buildSlots should return an empty array when endTime is before startTime");
+  console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 0, docks: 2 }] }).length === 0, "buildSlots should return an empty array when slotMinutes is zero");
+  console.assert(
+    buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }, { id: "T2", startTime: "09:00", endTime: "10:00", slotMinutes: 60, docks: 1 }] }).length === 3,
+    "buildSlots should support several ranges with different durations"
+  );
+  console.assert(getMaxDocks({ timeRanges: [{ docks: 2 }, { docks: 5 }] }) === 5, "getMaxDocks should return the highest number of docks");
+  console.assert(dockName(0) === "A" && dockName(3) === "D", "dockName should name docks A, B, C, D");
+  console.assert(escapeCsv('A "test"') === '"A ""test"""', "escapeCsv should escape quotes correctly");
+  console.assert(isDockAvailable([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "R2", "2026-01-01", "09:00", 0) === false, "isDockAvailable should detect an occupied dock in the same slot");
+  console.assert(findFirstAvailableDock([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "2026-01-01", "09:00", 2) === 1, "findFirstAvailableDock should return the first free dock");
+  console.assert(isValidEmail("transportista@demo.com") === true, "isValidEmail should accept valid emails");
+  console.assert(isValidEmail("transportista-demo") === false, "isValidEmail should reject invalid emails");
+  console.assert(hasReservationForEmailOnDate([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "A@B.COM", "2026-01-01") === true, "hasReservationForEmailOnDate should detect one active reservation per email and day");
+  console.assert(getMondayOfWeek("2026-01-01") === "2025-12-29", "getMondayOfWeek should return the Monday of the selected week");
+  console.assert(getWeekDays("2026-01-01").length === 7, "getWeekDays should return 7 days");
+  console.assert(countActiveReservationsForDate([{ date: "2026-01-01", status: "Confirmada" }, { date: "2026-01-01", status: "Cancelada" }], "2026-01-01") === 1, "countActiveReservationsForDate should count only active reservations");
+  console.assert(getDailyCapacity({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }) === 4, "getDailyCapacity should calculate total slot capacity for the day");
+  console.assert(getOccupancyPercent(5, 10) === 50, "getOccupancyPercent should calculate percentage correctly");
+  console.assert(getOccupancyLevel(4, 10, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "green", "getOccupancyLevel should be green below 50 percent");
+  console.assert(getOccupancyLevel(5, 10, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "yellow", "getOccupancyLevel should be yellow from 50 percent");
+  console.assert(getOccupancyLevel(91, 100, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "orange", "getOccupancyLevel should be orange above 90 percent");
+  console.assert(getOccupancyLevel(10, 10, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "red", "getOccupancyLevel should be red at 100 percent");
+  console.assert(createResponsiveStyles(false).gridTwo.gridTemplateColumns !== "1fr", "desktop styles should keep two-column booking layout");
+  console.assert(createResponsiveStyles(true).gridTwo.gridTemplateColumns === "1fr", "mobile styles should use one-column booking layout");
+  console.assert(createResponsiveStyles(true).primaryButton.width === "100%", "mobile buttons should be full width");
+}
+
+runBasicTests();
+
+const initialReservations = [
+  { id: "RSV-1001", email: "demo.transportista@correo.com", confirmationCode: "CNF-100001", date: todayIso(), time: "09:00", plate: "1234ABC", awb: "075-12345678", company: "Transporte Demo", contact: "Carlos Martin", phone: "+34 600 000 001", operation: "Descarga", status: "Confirmada", createdAt: new Date().toLocaleString(), dockIndex: 0 },
+  { id: "RSV-1002", email: "otro.transportista@correo.com", confirmationCode: "CNF-100002", date: todayIso(), time: "09:00", plate: "9876XYZ", awb: "075-87654321", company: "Logistica Norte", contact: "Ana Perez", phone: "+34 600 000 002", operation: "Carga", status: "Confirmada", createdAt: new Date().toLocaleString(), dockIndex: 1 },
+  { id: "RSV-1003", email: "cargo.express@correo.com", confirmationCode: "CNF-100003", date: todayIso(), time: "12:00", plate: "5555KLM", awb: "075-33334444", company: "Cargo Express", contact: "Luis Gomez", phone: "+34 600 000 003", operation: "Descarga", status: "Confirmada", createdAt: new Date().toLocaleString(), dockIndex: 0 },
+];
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState("transportista");
+  const isMobile = useIsMobile();
+  const rs = useMemo(() => createResponsiveStyles(isMobile), [isMobile]);
+  const [appMode, setAppMode] = useState("transportista");
+  const [activeTab, setActiveTab] = useState("reservar");
+  const [transporterEmail, setTransporterEmail] = useState("");
+  const [emailInput, setEmailInput] = useState("");
   const [config, setConfig] = useState(initialConfig);
   const [reservations, setReservations] = useState(initialReservations);
   const [selectedDate, setSelectedDate] = useState(todayIso());
   const [selectedSlot, setSelectedSlot] = useState("");
   const [adminDate, setAdminDate] = useState(todayIso());
+  const [adminView, setAdminView] = useState("diaria");
   const [ganttDate, setGanttDate] = useState(todayIso());
   const [message, setMessage] = useState(null);
+  const [loginMessage, setLoginMessage] = useState(null);
   const [form, setForm] = useState({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
 
   const slots = useMemo(() => buildSlots(config), [config]);
@@ -265,10 +373,7 @@ export default function App() {
 
   function getDockIndexForReservation(date, time, reservationId) {
     const reservation = reservations.find((item) => item.id === reservationId);
-    if (reservation && Number.isInteger(Number(reservation.dockIndex))) {
-      return Number(reservation.dockIndex);
-    }
-
+    if (reservation && Number.isInteger(Number(reservation.dockIndex))) return Number(reservation.dockIndex);
     const slotReservations = getReservationsForSlot(date, time).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const index = slotReservations.findIndex((item) => item.id === reservationId);
     return index < 0 ? 0 : index;
@@ -301,9 +406,51 @@ export default function App() {
       .filter((reservation) => reservation.dockIndex < maxDocks);
   }, [reservations, ganttDate, slots, maxDocks]);
 
-  const canSubmit = Boolean(form.plate.trim() && form.awb.trim() && form.company.trim() && form.phone.trim() && selectedDate && selectedSlot);
+  const transporterReservations = useMemo(() => {
+    return reservations
+      .filter((reservation) => normalizeEmail(reservation.email) === normalizeEmail(transporterEmail))
+      .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+  }, [reservations, transporterEmail]);
+
+  const alreadyBookedSelectedDate = hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate);
+  const canSubmit = Boolean(transporterEmail && !alreadyBookedSelectedDate && form.plate.trim() && form.awb.trim() && form.company.trim() && form.phone.trim() && selectedDate && selectedSlot);
+
+  const activeReservations = reservations.filter((reservation) => reservation.date === adminDate && reservation.status !== "Cancelada");
+  const dailyCapacity = getDailyCapacity(config);
+  const weekDays = getWeekDays(adminDate);
+  const weeklyReservations = weekDays.map((date) => ({ date, dayName: dayLabelFromIso(date), count: countActiveReservationsForDate(reservations, date), capacity: dailyCapacity }));
+  const weeklyTotalReservations = weeklyReservations.reduce((sum, day) => sum + day.count, 0);
+  const weeklyTotalCapacity = weeklyReservations.reduce((sum, day) => sum + day.capacity, 0);
+
+  function loginTransporter() {
+    const cleanEmail = normalizeEmail(emailInput);
+    if (!isValidEmail(cleanEmail)) {
+      setLoginMessage({ type: "error", text: "Introduce un correo electronico valido." });
+      return;
+    }
+    setTransporterEmail(cleanEmail);
+    setLoginMessage(null);
+    setMessage(null);
+    setActiveTab("reservar");
+  }
+
+  function logoutTransporter() {
+    setTransporterEmail("");
+    setEmailInput("");
+    setMessage(null);
+    setActiveTab("reservar");
+  }
 
   function createReservation() {
+    if (!transporterEmail) {
+      setMessage({ type: "error", text: "Primero accede con tu correo electronico." });
+      return;
+    }
+    if (hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate)) {
+      setMessage({ type: "error", text: "Ya tienes una reserva activa para este dia. Solo se permite una reserva por dia." });
+      return;
+    }
+
     const selectedSlotInfo = getSlotByTime(slots, selectedSlot);
     const capacity = selectedSlotInfo ? Number(selectedSlotInfo.docks || 1) : 1;
     const usedNow = getReservationsForSlot(selectedDate, selectedSlot).length;
@@ -314,9 +461,11 @@ export default function App() {
     }
 
     const assignedDockIndex = findFirstAvailableDock(reservations, selectedDate, selectedSlot, capacity);
-
+    const confirmationCode = generateConfirmationCode();
     const newReservation = {
       id: "RSV-" + Math.floor(100000 + Math.random() * 900000),
+      email: transporterEmail,
+      confirmationCode,
       date: selectedDate,
       time: selectedSlot,
       plate: form.plate.trim().toUpperCase(),
@@ -332,7 +481,7 @@ export default function App() {
     };
 
     setReservations((current) => current.concat(newReservation));
-    setMessage({ type: "success", text: "Reserva confirmada: " + newReservation.id });
+    setMessage({ type: "success", text: "Reserva confirmada: " + newReservation.id + ". Codigo: " + confirmationCode + ". En esta demo el envio por email queda simulado." });
     setSelectedSlot("");
     setForm({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
   }
@@ -341,10 +490,24 @@ export default function App() {
     setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
   }
 
+  function cancelTransporterReservation(id) {
+    const targetReservation = reservations.find((reservation) => reservation.id === id);
+    if (!targetReservation) return;
+    if (normalizeEmail(targetReservation.email) !== normalizeEmail(transporterEmail)) {
+      setMessage({ type: "error", text: "No puedes cancelar una reserva asociada a otro correo." });
+      return;
+    }
+    if (targetReservation.status === "Cancelada") {
+      setMessage({ type: "error", text: "Esta reserva ya estaba cancelada." });
+      return;
+    }
+    setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
+    setMessage({ type: "success", text: "Reserva " + id + " cancelada correctamente." });
+  }
+
   function moveReservationToDock(id, dockIndex) {
     const targetReservation = reservations.find((reservation) => reservation.id === id);
     if (!targetReservation) return;
-
     const slot = getSlotByTime(slots, targetReservation.time);
     const capacity = slot ? Number(slot.docks || 1) : maxDocks;
     const targetDockIndex = Number(dockIndex);
@@ -353,24 +516,18 @@ export default function App() {
       setMessage({ type: "error", text: "Ese muelle no esta abierto para la franja de esta reserva." });
       return;
     }
-
     if (!isDockAvailable(reservations, id, targetReservation.date, targetReservation.time, targetDockIndex)) {
       setMessage({ type: "error", text: "Ese muelle ya esta ocupado en el mismo slot. Elige otro muelle." });
       return;
     }
-
     setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, dockIndex: targetDockIndex } : reservation)));
     setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle " + dockName(targetDockIndex) + "." });
   }
 
   function exportCsv() {
     const rows = reservations.filter((reservation) => reservation.date === adminDate);
-    const headers = ["ID", "Fecha", "Hora", "Estado", "Operacion", "Matricula", "AWB", "Empresa", "Contacto", "Telefono", "Creada"];
-    const csvRows = [headers.join(";")].concat(
-      rows.map((reservation) =>
-        [reservation.id, reservation.date, reservation.time, reservation.status, reservation.operation, reservation.plate, reservation.awb, reservation.company, reservation.contact, reservation.phone, reservation.createdAt].map(escapeCsv).join(";")
-      )
-    );
+    const headers = ["ID", "Codigo", "Email", "Fecha", "Hora", "Estado", "Operacion", "Matricula", "AWB", "Empresa", "Contacto", "Telefono", "Creada"];
+    const csvRows = [headers.join(";")].concat(rows.map((reservation) => [reservation.id, reservation.confirmationCode, reservation.email, reservation.date, reservation.time, reservation.status, reservation.operation, reservation.plate, reservation.awb, reservation.company, reservation.contact, reservation.phone, reservation.createdAt].map(escapeCsv).join(";")));
     const newLine = String.fromCharCode(10);
     const blob = new Blob([csvRows.join(newLine)], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -382,17 +539,16 @@ export default function App() {
   }
 
   function updateRange(id, field, value) {
-    setConfig((current) => ({
-      ...current,
-      timeRanges: current.timeRanges.map((range) => (range.id === id ? { ...range, [field]: field === "slotMinutes" || field === "docks" ? Number(value) || 1 : value } : range)),
-    }));
+    setConfig((current) => ({ ...current, timeRanges: current.timeRanges.map((range) => (range.id === id ? { ...range, [field]: field === "slotMinutes" || field === "docks" ? Number(value) || 1 : value } : range)) }));
+  }
+
+  function updateOccupancyThreshold(field, value) {
+    const numericValue = Math.max(0, Math.min(100, Number(value) || 0));
+    setConfig((current) => ({ ...current, occupancyThresholds: { ...current.occupancyThresholds, [field]: numericValue } }));
   }
 
   function addRange() {
-    setConfig((current) => ({
-      ...current,
-      timeRanges: current.timeRanges.concat({ id: "FR-" + Date.now(), startTime: "20:00", endTime: "22:00", slotMinutes: 30, docks: 2 }),
-    }));
+    setConfig((current) => ({ ...current, timeRanges: current.timeRanges.concat({ id: "FR-" + Date.now(), startTime: "20:00", endTime: "22:00", slotMinutes: 30, docks: 2 }) }));
   }
 
   function removeRange(id) {
@@ -402,10 +558,24 @@ export default function App() {
     });
   }
 
-  const activeReservations = reservations.filter((reservation) => reservation.date === adminDate && reservation.status !== "Cancelada");
-
   function tabStyle(tabName) {
-    return activeTab === tabName ? { ...s.tab, ...s.activeTab } : s.tab;
+    return activeTab === tabName ? { ...rs.tab, ...rs.activeTab } : rs.tab;
+  }
+
+  function modeButtonStyle(modeName) {
+    return appMode === modeName ? rs.primaryButton : rs.secondaryButton;
+  }
+
+  function openTransporterMode() {
+    setAppMode("transportista");
+    setActiveTab("reservar");
+    setMessage(null);
+  }
+
+  function openAdminMode() {
+    setAppMode("admin");
+    setActiveTab("admin");
+    setMessage(null);
   }
 
   function renderGantt() {
@@ -420,8 +590,8 @@ export default function App() {
     }
 
     return (
-      <div style={s.ganttWrapper}>
-        <div style={s.ganttHeader}>
+      <div style={rs.ganttWrapper}>
+        <div style={rs.ganttHeader}>
           <div style={{ padding: 12, fontWeight: 700 }}>Muelle</div>
           <div style={{ position: "relative", height: 46 }}>
             {hourMarks.map((minute) => {
@@ -430,9 +600,8 @@ export default function App() {
             })}
           </div>
         </div>
-
         {Array.from({ length: maxDocks }).map((_, dockIndex) => (
-          <div style={s.ganttRow} key={dockIndex}>
+          <div style={rs.ganttRow} key={dockIndex}>
             <div style={{ padding: 12, fontWeight: 800, background: "#f8fafc" }}>Muelle {dockName(dockIndex)}</div>
             <div style={{ position: "relative", height: 64, background: "linear-gradient(to right, #f8fafc, #ffffff)" }}>
               {hourMarks.map((minute) => {
@@ -458,54 +627,81 @@ export default function App() {
   }
 
   return (
-    <main style={s.page}>
-      <header style={s.hero}>
+    <main style={rs.page}>
+      <header style={rs.hero}>
         <div>
-          <p style={s.eyebrow}>Terminal de carga - Gestion de muelles</p>
-          <h1 style={{ margin: 0, fontSize: 34 }}>Reserva de slots de carga y descarga</h1>
-          <p style={s.heroText}>Herramienta para repartir llegadas de transportistas, evitar saturacion y mostrar ocupacion por franja horaria.</p>
+          <p style={rs.eyebrow}>Terminal de carga - Gestion de muelles</p>
+          <h1 style={{ margin: 0, fontSize: isMobile ? 26 : 34 }}>Reserva de slots de carga y descarga</h1>
+          <p style={rs.heroText}>Herramienta para repartir llegadas de transportistas, evitar saturacion y mostrar ocupacion por franja horaria.</p>
         </div>
-        <div style={s.configSummary}>
+        <div style={rs.configSummary}>
           <strong>Configuracion actual</strong>
           <span>{config.timeRanges.length} franjas - hasta {maxDocks} muelles - {dayStart}-{dayEnd}</span>
         </div>
       </header>
 
-      <nav style={s.tabs}>
-        <button style={tabStyle("transportista")} onClick={() => setActiveTab("transportista")}>Transportista</button>
-        <button style={tabStyle("admin")} onClick={() => setActiveTab("admin")}>Panel interno</button>
-        <button style={tabStyle("gantt")} onClick={() => setActiveTab("gantt")}>Gantt muelles</button>
-        <button style={tabStyle("config")} onClick={() => setActiveTab("config")}>Configuracion</button>
-      </nav>
+      <div style={rs.modeBar}>
+        <button style={modeButtonStyle("transportista")} onClick={openTransporterMode}>Vista transportista</button>
+        <button style={modeButtonStyle("admin")} onClick={openAdminMode}>Vista administrador</button>
+      </div>
 
-      {activeTab === "transportista" && (
-        <section style={s.gridTwo}>
-          <div style={s.card}>
+      {appMode === "transportista" && (
+        <nav style={rs.tabs}>
+          <button style={tabStyle("reservar")} onClick={() => setActiveTab("reservar")}>Reservar slot</button>
+          <button style={tabStyle("perfil")} onClick={() => setActiveTab("perfil")}>Mi perfil / reservas</button>
+        </nav>
+      )}
+
+      {appMode === "admin" && (
+        <nav style={rs.tabs}>
+          <button style={tabStyle("admin")} onClick={() => setActiveTab("admin")}>Panel interno</button>
+          <button style={tabStyle("gantt")} onClick={() => setActiveTab("gantt")}>Gantt muelles</button>
+          <button style={tabStyle("config")} onClick={() => setActiveTab("config")}>Configuracion</button>
+        </nav>
+      )}
+
+      {appMode === "transportista" && !transporterEmail && (
+        <section style={rs.card}>
+          <h2 style={{ margin: 0 }}>Acceso transportista</h2>
+          <p style={rs.muted}>Introduce tu correo electronico. No necesitas contrasena. Con este email podras ver tus reservas y recibir el codigo de confirmacion.</p>
+          {loginMessage && <div style={loginMessage.type === "success" ? rs.success : rs.error}>{loginMessage.text}</div>}
+          <div style={{ display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
+            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 320 }}>Correo electronico<input style={rs.input} type="email" value={emailInput} onChange={(event) => setEmailInput(event.target.value)} placeholder="empresa@transportista.com" /></label>
+            <button style={rs.primaryButton} onClick={loginTransporter}>Entrar</button>
+          </div>
+          <div style={rs.warning}>En esta version demo el acceso por email identifica al transportista, pero no envia todavia un email real ni valida identidad. Para produccion lo conectaremos a Supabase/Auth o a un servicio de email.</div>
+        </section>
+      )}
+
+      {appMode === "transportista" && transporterEmail && activeTab === "reservar" && (
+        <section style={rs.gridTwo}>
+          <div style={rs.card}>
             <h2 style={{ margin: 0 }}>Datos de identificacion</h2>
-            <p style={s.muted}>Introduce los datos minimos para reservar un hueco.</p>
-
-            <label style={s.label}>Matricula tractora *<input style={s.input} value={form.plate} onChange={(event) => updateForm("plate", event.target.value)} placeholder="Ej. 1234ABC" /></label>
-            <label style={s.label}>AWB / Referencia *<input style={s.input} value={form.awb} onChange={(event) => updateForm("awb", event.target.value)} placeholder="Ej. 075-12345678" /></label>
-            <label style={s.label}>Empresa transportista *<input style={s.input} value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Nombre de la empresa" /></label>
-            <label style={s.label}>Contacto<input style={s.input} value={form.contact} onChange={(event) => updateForm("contact", event.target.value)} placeholder="Nombre del conductor/contacto" /></label>
-            <label style={s.label}>Telefono / email *<input style={s.input} value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="Telefono o email" /></label>
-            <label style={s.label}>Tipo de operacion<select style={s.input} value={form.operation} onChange={(event) => updateForm("operation", event.target.value)}><option>Carga</option><option>Descarga</option><option>Carga y descarga</option></select></label>
+            <p style={rs.muted}>Sesion iniciada como <strong>{transporterEmail}</strong>.</p>
+            <button style={rs.secondaryButton} onClick={logoutTransporter}>Cambiar correo</button>
+            <p style={rs.muted}>Introduce los datos minimos para reservar un hueco. Solo puedes tener una reserva activa por dia.</p>
+            <label style={rs.label}>Matricula tractora *<input style={rs.input} value={form.plate} onChange={(event) => updateForm("plate", event.target.value)} placeholder="Ej. 1234ABC" /></label>
+            <label style={rs.label}>AWB / Referencia *<input style={rs.input} value={form.awb} onChange={(event) => updateForm("awb", event.target.value)} placeholder="Ej. 075-12345678" /></label>
+            <label style={rs.label}>Empresa transportista *<input style={rs.input} value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Nombre de la empresa" /></label>
+            <label style={rs.label}>Contacto<input style={rs.input} value={form.contact} onChange={(event) => updateForm("contact", event.target.value)} placeholder="Nombre del conductor/contacto" /></label>
+            <label style={rs.label}>Telefono / email *<input style={rs.input} value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="Telefono o email" /></label>
+            <label style={rs.label}>Tipo de operacion<select style={rs.input} value={form.operation} onChange={(event) => updateForm("operation", event.target.value)}><option>Carga</option><option>Descarga</option><option>Carga y descarga</option></select></label>
           </div>
 
-          <div style={s.card}>
-            <div style={s.sectionHeader}>
+          <div style={rs.card}>
+            <div style={rs.sectionHeader}>
               <div>
                 <h2 style={{ margin: 0 }}>Selecciona dia y slot</h2>
-                <p style={s.muted}>Cada slot usa la duracion y capacidad de su franja horaria configurada.</p>
+                <p style={rs.muted}>Cada slot usa la duracion y capacidad de su franja horaria configurada.</p>
+                {alreadyBookedSelectedDate && <p style={{ ...rs.error, marginTop: 12 }}>Ya tienes una reserva activa para este dia. Solo se permite una reserva diaria por correo.</p>}
               </div>
-              <label style={{ ...s.label, marginTop: 0, minWidth: 180 }}>Fecha<input style={s.input} type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label>
+              <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>Fecha<input style={rs.input} type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label>
             </div>
-
-            {message && <div style={message.type === "success" ? s.success : s.error}>{message.text}</div>}
-
-            <div style={s.slotGrid}>
+            {message && <div style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+            <div style={rs.slotGrid}>
               {availability.map((slot) => {
-                const currentSlotStyle = slot.full ? { ...s.slot, ...s.slotFull } : selectedSlot === slot.time ? { ...s.slot, ...s.slotSelected } : s.slot;
+                const occupancyStyle = getOccupancyBadgeStyle(slot.used, slot.docks, config.occupancyThresholds);
+                const currentSlotStyle = selectedSlot === slot.time ? { ...rs.slot, ...rs.slotSelected } : slot.full ? { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.color, cursor: "not-allowed" } : { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.color };
                 const availableText = slot.full ? "Completo" : slot.available + " hueco" + (slot.available === 1 ? "" : "s") + " disponible" + (slot.available === 1 ? "" : "s");
                 return (
                   <button key={slot.rangeId + slot.time} disabled={slot.full} style={currentSlotStyle} onClick={() => setSelectedSlot(slot.time)}>
@@ -516,54 +712,103 @@ export default function App() {
                 );
               })}
             </div>
-
-            <div style={s.confirmBox}>
+            <div style={rs.confirmBox}>
               <div>
                 <strong>Slot seleccionado: {selectedSlot || "ninguno"}</strong>
                 <p style={{ margin: "6px 0 0", color: "#64748b" }}>Al confirmar se vuelve a validar la disponibilidad para evitar doble reserva.</p>
               </div>
-              <button style={canSubmit ? s.primaryButton : { ...s.primaryButton, ...s.disabledButton }} disabled={!canSubmit} onClick={createReservation}>Confirmar reserva</button>
+              <button style={canSubmit ? rs.primaryButton : { ...rs.primaryButton, ...rs.disabledButton }} disabled={!canSubmit} onClick={createReservation}>Confirmar reserva</button>
             </div>
           </div>
         </section>
       )}
 
-      {activeTab === "admin" && (
-        <section style={s.card}>
-          <div style={s.sectionHeader}>
+      {appMode === "transportista" && transporterEmail && activeTab === "perfil" && (
+        <section style={rs.card}>
+          <div style={rs.sectionHeader}>
+            <div>
+              <h2 style={{ margin: 0 }}>Mi perfil y mis reservas</h2>
+              <p style={rs.muted}>Correo de acceso: <strong>{transporterEmail}</strong></p>
+            </div>
+            <button style={rs.secondaryButton} onClick={logoutTransporter}>Salir / cambiar correo</button>
+          </div>
+          {message && <div style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+          {transporterReservations.length === 0 && <p style={rs.muted}>Todavia no tienes reservas asociadas a este correo.</p>}
+          {transporterReservations.map((reservation) => (
+            <div style={rs.reservationItem} key={reservation.id}>
+              <div>
+                <strong>{reservation.date} - {reservation.time} - {reservation.operation}</strong>
+                <p style={{ margin: "5px 0 0", color: "#64748b" }}>Codigo confirmacion: <strong>{reservation.confirmationCode}</strong> - Reserva {reservation.id}</p>
+                <p style={{ margin: "5px 0 0", color: "#64748b" }}>Matricula {reservation.plate} - AWB {reservation.awb} - Empresa {reservation.company}</p>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={reservation.status === "Cancelada" ? { ...rs.badge, ...rs.dangerBadge } : rs.badge}>{reservation.status}</span>
+                {reservation.status !== "Cancelada" && <button style={rs.dangerButton} onClick={() => cancelTransporterReservation(reservation.id)}>Cancelar cita</button>}
+              </div>
+            </div>
+          ))}
+          <div style={rs.warning}>El envio del codigo al correo esta simulado en esta demo. Para envio real necesitamos conectar un backend o servicio de email.</div>
+        </section>
+      )}
+
+      {appMode === "admin" && activeTab === "admin" && (
+        <section style={rs.card}>
+          <div style={rs.sectionHeader}>
             <div>
               <h2 style={{ margin: 0 }}>Panel interno de reservas</h2>
-              <p style={s.muted}>Vista operativa por franja, ocupacion y detalle de transportistas.</p>
+              <p style={rs.muted}>Vista operativa por franja, ocupacion y detalle de transportistas.</p>
             </div>
-            <div style={{ display: "flex", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
-              <label style={{ ...s.label, marginTop: 0 }}>Fecha<input style={s.input} type="date" value={adminDate} onChange={(event) => setAdminDate(event.target.value)} /></label>
-              <button style={s.secondaryButton} onClick={exportCsv}>Exportar CSV</button>
+            <div style={{ display: "flex", alignItems: "end", gap: 12, flexWrap: "wrap", width: isMobile ? "100%" : "auto" }}>
+              <label style={{ ...rs.label, marginTop: 0 }}>Fecha<input style={rs.input} type="date" value={adminDate} onChange={(event) => setAdminDate(event.target.value)} /></label>
+              <button style={adminView === "diaria" ? rs.primaryButton : rs.secondaryButton} onClick={() => setAdminView("diaria")}>Vista diaria</button>
+              <button style={adminView === "semanal" ? rs.primaryButton : rs.secondaryButton} onClick={() => setAdminView("semanal")}>Vista semanal</button>
+              <button style={rs.secondaryButton} onClick={exportCsv}>Exportar CSV</button>
             </div>
           </div>
 
-          <div style={s.stats}>
-            <div style={s.stat}><span>Reservas activas</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{activeReservations.length}</strong></div>
-            <div style={s.stat}><span>Capacidad diaria</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{slots.reduce((sum, slot) => sum + Number(slot.docks || 0), 0)}</strong></div>
-            <div style={s.stat}><span>Maximo muelles</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{maxDocks}</strong></div>
+          {adminView === "semanal" && (
+            <div>
+              <div style={rs.stats}>
+                <div style={rs.stat}><span>Total semana</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{weeklyTotalReservations}/{weeklyTotalCapacity}</strong></div>
+                <div style={rs.stat}><span>Semana desde</span><strong style={{ display: "block", marginTop: 8, fontSize: 24 }}>{weekDays[0]}</strong></div>
+                <div style={rs.stat}><span>Semana hasta</span><strong style={{ display: "block", marginTop: 8, fontSize: 24 }}>{weekDays[6]}</strong></div>
+              </div>
+              <div style={rs.table}>
+                <div style={{ ...rs.tableHeader, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr" }}><span>Dia</span><span>Fecha</span><span>Reservas / slots</span></div>
+                {weeklyReservations.map((day) => (
+                  <div style={{ ...rs.tableRow, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr" }} key={day.date}>
+                    <strong>{day.dayName}</strong>
+                    <span>{day.date}</span>
+                    <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(day.count, day.capacity, config.occupancyThresholds) }}>{day.count}/{day.capacity}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={adminView === "diaria" ? rs.stats : { display: "none" }}>
+            <div style={rs.stat}><span>Reservas activas</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{activeReservations.length}</strong></div>
+            <div style={rs.stat}><span>Capacidad diaria</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{dailyCapacity}</strong></div>
+            <div style={rs.stat}><span>Maximo muelles</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{maxDocks}</strong></div>
           </div>
 
-          <div style={s.table}>
-            <div style={s.tableHeader}><span>Hora</span><span>Ocupacion</span><span>Reservas</span></div>
+          <div style={adminView === "diaria" ? rs.table : { display: "none" }}>
+            <div style={rs.tableHeader}><span>Hora</span><span>Ocupacion</span><span>Reservas</span></div>
             {adminRows.map((row) => (
-              <div style={s.tableRow} key={row.rangeId + row.time}>
+              <div style={rs.tableRow} key={row.rangeId + row.time}>
                 <strong>{row.time}</strong>
-                <span style={row.available === 0 ? { ...s.badge, ...s.dangerBadge } : s.badge}>{row.used}/{row.docks} - {row.slotMinutes} min</span>
+                <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(row.used, row.docks, config.occupancyThresholds) }}>{row.used}/{row.docks} - {row.slotMinutes} min</span>
                 <div>
                   {row.reservations.length === 0 && <span style={{ color: "#94a3b8" }}>Sin reservas</span>}
                   {row.reservations.map((reservation) => (
-                    <div style={s.reservationItem} key={reservation.id}>
+                    <div style={rs.reservationItem} key={reservation.id}>
                       <div>
-                        <strong>{reservation.id} - {reservation.operation} - {reservation.plate}</strong>
-                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>AWB {reservation.awb} - {reservation.company} - {reservation.phone}</p>
+                        <strong>{reservation.id} - {reservation.confirmationCode} - {reservation.operation} - {reservation.plate}</strong>
+                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Email {reservation.email} - AWB {reservation.awb} - {reservation.company} - {reservation.phone}</p>
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        <span style={s.badge}>{reservation.status}</span>
-                        {reservation.status !== "Cancelada" && <button style={s.secondaryButton} onClick={() => cancelReservation(reservation.id)}>Cancelar</button>}
+                        <span style={rs.badge}>{reservation.status}</span>
+                        {reservation.status !== "Cancelada" && <button style={rs.secondaryButton} onClick={() => cancelReservation(reservation.id)}>Cancelar</button>}
                       </div>
                     </div>
                   ))}
@@ -574,72 +819,86 @@ export default function App() {
         </section>
       )}
 
-      {activeTab === "gantt" && (
-        <section style={s.card}>
-          <div style={s.sectionHeader}>
+      {appMode === "admin" && activeTab === "gantt" && (
+        <section style={rs.card}>
+          <div style={rs.sectionHeader}>
             <div>
               <h2 style={{ margin: 0 }}>Gantt de ocupacion por muelle</h2>
-              <p style={s.muted}>Vista de ocupacion por muelle. Puedes reasignar manualmente reservas entre Muelle A, B, C, D...</p>
+              <p style={rs.muted}>Vista de ocupacion por muelle. Puedes reasignar manualmente reservas entre Muelle A, B, C, D...</p>
             </div>
-            <label style={{ ...s.label, marginTop: 0, minWidth: 180 }}>Fecha<input style={s.input} type="date" value={ganttDate} onChange={(event) => setGanttDate(event.target.value)} /></label>
+            <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>Fecha<input style={rs.input} type="date" value={ganttDate} onChange={(event) => setGanttDate(event.target.value)} /></label>
           </div>
           {renderGantt()}
           <div style={{ marginTop: 20 }}>
             <h3 style={{ margin: "0 0 12px" }}>Asignacion manual de muelles</h3>
-            {message && <div style={message.type === "success" ? s.success : s.error}>{message.text}</div>}
-            {ganttReservations.length === 0 && <p style={s.muted}>No hay reservas activas para esta fecha.</p>}
+            {message && <div style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+            {ganttReservations.length === 0 && <p style={rs.muted}>No hay reservas activas para esta fecha.</p>}
             {ganttReservations.map((reservation) => {
               const slot = getSlotByTime(slots, reservation.time);
               const capacity = slot ? Number(slot.docks || 1) : maxDocks;
               return (
-                <div style={s.reservationItem} key={reservation.id}>
+                <div style={rs.reservationItem} key={reservation.id}>
                   <div>
                     <strong>{reservation.id} - {reservation.time}-{reservation.endTime} - {reservation.plate}</strong>
                     <p style={{ margin: "5px 0 0", color: "#64748b" }}>AWB {reservation.awb} - {reservation.company} - muelle actual {dockName(reservation.dockIndex)}</p>
                   </div>
-                  <label style={{ ...s.label, marginTop: 0, minWidth: 160 }}>
+                  <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 160 }}>
                     Mover a muelle
-                    <select style={s.input} value={reservation.dockIndex} onChange={(event) => moveReservationToDock(reservation.id, event.target.value)}>
-                      {Array.from({ length: capacity }).map((_, dockIndex) => (
-                        <option key={dockIndex} value={dockIndex}>Muelle {dockName(dockIndex)}</option>
-                      ))}
+                    <select style={rs.input} value={reservation.dockIndex} onChange={(event) => moveReservationToDock(reservation.id, event.target.value)}>
+                      {Array.from({ length: capacity }).map((_, dockIndex) => <option key={dockIndex} value={dockIndex}>Muelle {dockName(dockIndex)}</option>)}
                     </select>
                   </label>
                 </div>
               );
             })}
           </div>
-          <div style={s.warning}>Si el muelle elegido ya esta ocupado en el mismo slot, la app bloquea el cambio para evitar solapes.</div>
+          <div style={rs.warning}>Si el muelle elegido ya esta ocupado en el mismo slot, la app bloquea el cambio para evitar solapes.</div>
         </section>
       )}
 
-      {activeTab === "config" && (
-        <section style={s.card}>
-          <div style={s.sectionHeader}>
+      {appMode === "admin" && activeTab === "config" && (
+        <section style={rs.card}>
+          <div style={rs.sectionHeader}>
             <div>
               <h2 style={{ margin: 0 }}>Configuracion por franjas horarias</h2>
-              <p style={s.muted}>Puedes crear varias franjas con diferente duracion de slot y diferente numero de muelles abiertos.</p>
+              <p style={rs.muted}>Puedes crear varias franjas con diferente duracion de slot y diferente numero de muelles abiertos.</p>
             </div>
-            <button style={s.primaryButton} onClick={addRange}>Anadir franja</button>
+            <button style={rs.primaryButton} onClick={addRange}>Anadir franja</button>
+          </div>
+
+          <div style={rs.rangeCard}>
+            <h3 style={{ margin: "0 0 8px" }}>Rangos de color de ocupacion</h3>
+            <p style={rs.muted}>Configura los umbrales que pintan los indicadores de ocupacion. Por defecto: verde por debajo del 50%, amarillo entre 50% y 90%, naranja por encima del 90%, rojo al 100%.</p>
+            <div style={rs.configGrid}>
+              <label style={rs.label}>Verde hasta menor que (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.greenMax} onChange={(event) => updateOccupancyThreshold("greenMax", event.target.value)} /></label>
+              <label style={rs.label}>Amarillo hasta (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.yellowMax} onChange={(event) => updateOccupancyThreshold("yellowMax", event.target.value)} /></label>
+              <label style={rs.label}>Naranja hasta (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.orangeMax} onChange={(event) => updateOccupancyThreshold("orangeMax", event.target.value)} /></label>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(20, 100, config.occupancyThresholds) }}>20%</span>
+              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(60, 100, config.occupancyThresholds) }}>60%</span>
+              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(95, 100, config.occupancyThresholds) }}>95%</span>
+              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(100, 100, config.occupancyThresholds) }}>100%</span>
+            </div>
           </div>
 
           {config.timeRanges.map((range, index) => (
-            <div style={s.rangeCard} key={range.id}>
+            <div style={rs.rangeCard} key={range.id}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
                 <strong>Franja {index + 1}</strong>
-                <button style={config.timeRanges.length <= 1 ? { ...s.dangerButton, ...s.disabledButton } : s.dangerButton} disabled={config.timeRanges.length <= 1} onClick={() => removeRange(range.id)}>Eliminar</button>
+                <button style={config.timeRanges.length <= 1 ? { ...rs.dangerButton, ...rs.disabledButton } : rs.dangerButton} disabled={config.timeRanges.length <= 1} onClick={() => removeRange(range.id)}>Eliminar</button>
               </div>
-              <div style={s.configGrid}>
-                <label style={s.label}>Hora inicio<input style={s.input} type="time" value={range.startTime} onChange={(event) => updateRange(range.id, "startTime", event.target.value)} /></label>
-                <label style={s.label}>Hora fin<input style={s.input} type="time" value={range.endTime} onChange={(event) => updateRange(range.id, "endTime", event.target.value)} /></label>
-                <label style={s.label}>Duracion slot<select style={s.input} value={range.slotMinutes} onChange={(event) => updateRange(range.id, "slotMinutes", event.target.value)}><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option><option value="90">90 minutos</option></select></label>
-                <label style={s.label}>Muelles abiertos<input style={s.input} type="number" min="1" value={range.docks} onChange={(event) => updateRange(range.id, "docks", event.target.value)} /></label>
+              <div style={rs.configGrid}>
+                <label style={rs.label}>Hora inicio<input style={rs.input} type="time" value={range.startTime} onChange={(event) => updateRange(range.id, "startTime", event.target.value)} /></label>
+                <label style={rs.label}>Hora fin<input style={rs.input} type="time" value={range.endTime} onChange={(event) => updateRange(range.id, "endTime", event.target.value)} /></label>
+                <label style={rs.label}>Duracion slot<select style={rs.input} value={range.slotMinutes} onChange={(event) => updateRange(range.id, "slotMinutes", event.target.value)}><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option><option value="90">90 minutos</option></select></label>
+                <label style={rs.label}>Muelles abiertos<input style={rs.input} type="number" min="1" value={range.docks} onChange={(event) => updateRange(range.id, "docks", event.target.value)} /></label>
               </div>
-              <p style={{ ...s.muted, marginBottom: 0 }}>Slots generados en esta franja: {buildSlotsForRange(range).length}</p>
+              <p style={{ ...rs.muted, marginBottom: 0 }}>Slots generados en esta franja: {buildSlotsForRange(range).length}</p>
             </div>
           ))}
 
-          <div style={s.warning}>Evita solapar franjas si quieres una disponibilidad limpia. Si dos franjas tienen la misma hora de inicio, el sistema las mostrara como slots separados con la misma hora.</div>
+          <div style={rs.warning}>Evita solapar franjas si quieres una disponibilidad limpia. Si dos franjas tienen la misma hora de inicio, el sistema las mostrara como slots separados con la misma hora. Los rangos de color se aplican a la vista semanal y a los indicadores de ocupacion por slot.</div>
         </section>
       )}
     </main>
