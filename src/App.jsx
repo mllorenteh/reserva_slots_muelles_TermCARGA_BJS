@@ -13,8 +13,8 @@ const initialConfig = {
   ],
 };
 
-const SUPABASE_URL = "PEGA_AQUI_TU_SUPABASE_URL";
-const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_SUPABASE_ANON_KEY";
+const SUPABASE_URL = "https://ppdmzpejjlwwqxurqvgq.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_apQrgWIC1ZgbeUJI6vQ6pQ_OCzakgvQ";
 const SUPABASE_TABLE = "reservations";
 
 function isSupabaseConfigured() {
