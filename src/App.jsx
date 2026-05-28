@@ -1,0 +1,647 @@
+import React, { useMemo, useState } from "react";
+
+const initialConfig = {
+  timeRanges: [
+    { id: "FR-1", startTime: "08:00", endTime: "12:00", slotMinutes: 30, docks: 4 },
+    { id: "FR-2", startTime: "12:00", endTime: "16:00", slotMinutes: 45, docks: 3 },
+    { id: "FR-3", startTime: "16:00", endTime: "20:00", slotMinutes: 30, docks: 4 },
+  ],
+};
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function timeToMinutes(time) {
+  const parts = String(time || "00:00").split(":").map(Number);
+  const hours = Number.isFinite(parts[0]) ? parts[0] : 0;
+  const minutes = Number.isFinite(parts[1]) ? parts[1] : 0;
+  return hours * 60 + minutes;
+}
+
+function addMinutes(time, minutesToAdd) {
+  const parts = String(time || "00:00").split(":").map(Number);
+  const date = new Date(2000, 0, 1, parts[0] || 0, parts[1] || 0);
+  date.setMinutes(date.getMinutes() + Number(minutesToAdd || 0));
+  return date.toTimeString().slice(0, 5);
+}
+
+function minutesToTime(totalMinutes) {
+  const safeMinutes = Math.max(0, Number(totalMinutes || 0));
+  const hours = Math.floor(safeMinutes / 60);
+  const minutes = safeMinutes % 60;
+  return String(hours).padStart(2, "0") + ":" + String(minutes).padStart(2, "0");
+}
+
+function buildSlotsForRange(range) {
+  const slots = [];
+  const slotMinutes = Number(range.slotMinutes || 0);
+  let current = range.startTime;
+
+  if (!slotMinutes || slotMinutes <= 0) {
+    return slots;
+  }
+
+  if (timeToMinutes(range.endTime) <= timeToMinutes(range.startTime)) {
+    return slots;
+  }
+
+  while (timeToMinutes(current) < timeToMinutes(range.endTime)) {
+    slots.push({
+      time: current,
+      endTime: addMinutes(current, slotMinutes),
+      slotMinutes,
+      docks: Number(range.docks || 1),
+      rangeId: range.id,
+    });
+    current = addMinutes(current, slotMinutes);
+  }
+
+  return slots;
+}
+
+function buildSlots(config) {
+  return (config.timeRanges || [])
+    .slice()
+    .sort((a, b) => timeToMinutes(a.startTime) - timeToMinutes(b.startTime))
+    .flatMap(buildSlotsForRange);
+}
+
+function getDayStart(config) {
+  const ranges = config.timeRanges || [];
+  if (!ranges.length) return "08:00";
+  return ranges.reduce((min, range) => (timeToMinutes(range.startTime) < timeToMinutes(min) ? range.startTime : min), ranges[0].startTime);
+}
+
+function getDayEnd(config) {
+  const ranges = config.timeRanges || [];
+  if (!ranges.length) return "20:00";
+  return ranges.reduce((max, range) => (timeToMinutes(range.endTime) > timeToMinutes(max) ? range.endTime : max), ranges[0].endTime);
+}
+
+function getMaxDocks(config) {
+  const ranges = config.timeRanges || [];
+  return Math.max(1, ...ranges.map((range) => Number(range.docks || 1)));
+}
+
+function dockName(index) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (index < alphabet.length) return alphabet[index];
+  return "M" + String(index + 1);
+}
+
+function escapeCsv(value) {
+  return '"' + String(value || "").replace(/"/g, '""') + '"';
+}
+
+function getSlotByTime(slots, time) {
+  return slots.find((slot) => slot.time === time) || null;
+}
+
+function isDockAvailable(reservations, reservationId, date, time, dockIndex) {
+  return !reservations.some(
+    (reservation) =>
+      reservation.id !== reservationId &&
+      reservation.date === date &&
+      reservation.time === time &&
+      reservation.status !== "Cancelada" &&
+      Number(reservation.dockIndex) === Number(dockIndex)
+  );
+}
+
+function findFirstAvailableDock(reservations, date, time, capacity) {
+  for (let dockIndex = 0; dockIndex < capacity; dockIndex += 1) {
+    if (isDockAvailable(reservations, "", date, time, dockIndex)) {
+      return dockIndex;
+    }
+  }
+  return 0;
+}
+
+function runBasicTests() {
+  console.assert(timeToMinutes("08:30") === 510, "timeToMinutes should convert 08:30 to 510 minutes");
+  console.assert(addMinutes("08:00", 30) === "08:30", "addMinutes should add 30 minutes correctly");
+  console.assert(
+    JSON.stringify(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }).map((slot) => slot.time)) === JSON.stringify(["08:00", "08:30"]),
+    "buildSlots should generate slots up to, but not including, endTime"
+  );
+  console.assert(
+    buildSlots({ timeRanges: [{ id: "T1", startTime: "20:00", endTime: "08:00", slotMinutes: 30, docks: 2 }] }).length === 0,
+    "buildSlots should return an empty array when endTime is before startTime"
+  );
+  console.assert(
+    buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 0, docks: 2 }] }).length === 0,
+    "buildSlots should return an empty array when slotMinutes is zero"
+  );
+  console.assert(
+    buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }, { id: "T2", startTime: "09:00", endTime: "10:00", slotMinutes: 60, docks: 1 }] }).length === 3,
+    "buildSlots should support several ranges with different durations"
+  );
+  console.assert(getMaxDocks({ timeRanges: [{ docks: 2 }, { docks: 5 }] }) === 5, "getMaxDocks should return the highest number of docks");
+  console.assert(dockName(0) === "A" && dockName(3) === "D", "dockName should name docks A, B, C, D");
+  console.assert(escapeCsv('A "test"') === '"A ""test"""', "escapeCsv should escape quotes correctly");
+  console.assert(
+    isDockAvailable([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "R2", "2026-01-01", "09:00", 0) === false,
+    "isDockAvailable should detect an occupied dock in the same slot"
+  );
+  console.assert(
+    findFirstAvailableDock([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "2026-01-01", "09:00", 2) === 1,
+    "findFirstAvailableDock should return the first free dock"
+  );
+}
+
+runBasicTests();
+
+const initialReservations = [
+  {
+    id: "RSV-1001",
+    date: todayIso(),
+    time: "09:00",
+    plate: "1234ABC",
+    awb: "075-12345678",
+    company: "Transporte Demo",
+    contact: "Carlos Martin",
+    phone: "+34 600 000 001",
+    operation: "Descarga",
+    status: "Confirmada",
+    createdAt: new Date().toLocaleString(),
+    dockIndex: 0,
+  },
+  {
+    id: "RSV-1002",
+    date: todayIso(),
+    time: "09:00",
+    plate: "9876XYZ",
+    awb: "075-87654321",
+    company: "Logistica Norte",
+    contact: "Ana Perez",
+    phone: "+34 600 000 002",
+    operation: "Carga",
+    status: "Confirmada",
+    createdAt: new Date().toLocaleString(),
+    dockIndex: 1,
+  },
+  {
+    id: "RSV-1003",
+    date: todayIso(),
+    time: "12:00",
+    plate: "5555KLM",
+    awb: "075-33334444",
+    company: "Cargo Express",
+    contact: "Luis Gomez",
+    phone: "+34 600 000 003",
+    operation: "Descarga",
+    status: "Confirmada",
+    createdAt: new Date().toLocaleString(),
+    dockIndex: 0,
+  },
+];
+
+const s = {
+  page: { maxWidth: 1320, margin: "0 auto", padding: 24, fontFamily: "Arial, Helvetica, sans-serif", color: "#172033" },
+  hero: { background: "white", borderRadius: 24, padding: 24, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)", display: "flex", justifyContent: "space-between", gap: 24, alignItems: "center", marginBottom: 20, flexWrap: "wrap" },
+  card: { background: "white", borderRadius: 24, padding: 24, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)" },
+  eyebrow: { margin: "0 0 8px", color: "#64748b", fontSize: 14, fontWeight: 700 },
+  heroText: { color: "#64748b", maxWidth: 720 },
+  configSummary: { minWidth: 300, background: "#f1f5f9", borderRadius: 18, padding: 16 },
+  tabs: { display: "flex", gap: 8, background: "white", padding: 8, borderRadius: 18, width: "fit-content", marginBottom: 20, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)", flexWrap: "wrap" },
+  tab: { border: 0, background: "transparent", padding: "12px 18px", borderRadius: 14, cursor: "pointer", fontWeight: 700, color: "#475569" },
+  activeTab: { background: "#172033", color: "white" },
+  gridTwo: { display: "grid", gridTemplateColumns: "minmax(280px, 400px) 1fr", gap: 20 },
+  label: { display: "grid", gap: 7, marginTop: 14, fontWeight: 700, color: "#334155" },
+  input: { width: "100%", border: "1px solid #cbd5e1", borderRadius: 12, padding: 12, background: "white", color: "#172033" },
+  sectionHeader: { display: "flex", justifyContent: "space-between", gap: 20, alignItems: "end", marginBottom: 20, flexWrap: "wrap" },
+  muted: { color: "#64748b" },
+  slotGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 },
+  slot: { border: "1px solid #cbd5e1", background: "white", borderRadius: 18, padding: 16, cursor: "pointer", textAlign: "left" },
+  slotSelected: { background: "#172033", color: "white", borderColor: "#172033" },
+  slotFull: { background: "#f1f5f9", color: "#94a3b8", cursor: "not-allowed" },
+  confirmBox: { marginTop: 20, background: "#f1f5f9", borderRadius: 18, padding: 18, display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", flexWrap: "wrap" },
+  primaryButton: { border: 0, borderRadius: 12, padding: "12px 16px", fontWeight: 700, cursor: "pointer", background: "#172033", color: "white" },
+  disabledButton: { background: "#94a3b8", cursor: "not-allowed" },
+  secondaryButton: { border: 0, borderRadius: 12, padding: "12px 16px", fontWeight: 700, cursor: "pointer", background: "#e2e8f0", color: "#172033" },
+  dangerButton: { border: 0, borderRadius: 12, padding: "12px 16px", fontWeight: 700, cursor: "pointer", background: "#fee2e2", color: "#991b1b" },
+  success: { borderRadius: 14, padding: 14, marginBottom: 16, fontWeight: 700, background: "#dcfce7", color: "#166534" },
+  error: { borderRadius: 14, padding: 14, marginBottom: 16, fontWeight: 700, background: "#fee2e2", color: "#991b1b" },
+  stats: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 },
+  stat: { background: "#f1f5f9", borderRadius: 18, padding: 18 },
+  table: { border: "1px solid #e2e8f0", borderRadius: 18, overflow: "hidden" },
+  tableHeader: { display: "grid", gridTemplateColumns: "90px 140px 1fr", gap: 12, padding: 14, background: "#f1f5f9", fontWeight: 700, color: "#475569" },
+  tableRow: { display: "grid", gridTemplateColumns: "90px 140px 1fr", gap: 12, padding: 14, borderTop: "1px solid #e2e8f0", alignItems: "start" },
+  badge: { display: "inline-block", width: "fit-content", background: "#e2e8f0", borderRadius: 999, padding: "5px 10px", fontWeight: 700, color: "#334155" },
+  dangerBadge: { background: "#fee2e2", color: "#991b1b" },
+  reservationItem: { background: "#f8fafc", borderRadius: 16, padding: 12, display: "flex", justifyContent: "space-between", gap: 14, marginBottom: 10, flexWrap: "wrap" },
+  configGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 16, marginTop: 14 },
+  warning: { marginTop: 20, background: "#fffbeb", color: "#92400e", borderRadius: 18, padding: 16, fontWeight: 700 },
+  rangeCard: { border: "1px solid #e2e8f0", borderRadius: 18, padding: 16, marginTop: 14, background: "#f8fafc" },
+  ganttWrapper: { overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 18, background: "white" },
+  ganttHeader: { display: "grid", gridTemplateColumns: "90px 1fr", minWidth: 900, borderBottom: "1px solid #e2e8f0", background: "#f1f5f9" },
+  ganttRow: { display: "grid", gridTemplateColumns: "90px 1fr", minWidth: 900, borderBottom: "1px solid #e2e8f0" },
+};
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState("transportista");
+  const [config, setConfig] = useState(initialConfig);
+  const [reservations, setReservations] = useState(initialReservations);
+  const [selectedDate, setSelectedDate] = useState(todayIso());
+  const [selectedSlot, setSelectedSlot] = useState("");
+  const [adminDate, setAdminDate] = useState(todayIso());
+  const [ganttDate, setGanttDate] = useState(todayIso());
+  const [message, setMessage] = useState(null);
+  const [form, setForm] = useState({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
+
+  const slots = useMemo(() => buildSlots(config), [config]);
+  const maxDocks = useMemo(() => getMaxDocks(config), [config]);
+  const dayStart = useMemo(() => getDayStart(config), [config]);
+  const dayEnd = useMemo(() => getDayEnd(config), [config]);
+
+  function updateForm(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function getReservationsForSlot(date, time) {
+    return reservations.filter((reservation) => reservation.date === date && reservation.time === time && reservation.status !== "Cancelada");
+  }
+
+  function getDockIndexForReservation(date, time, reservationId) {
+    const reservation = reservations.find((item) => item.id === reservationId);
+    if (reservation && Number.isInteger(Number(reservation.dockIndex))) {
+      return Number(reservation.dockIndex);
+    }
+
+    const slotReservations = getReservationsForSlot(date, time).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const index = slotReservations.findIndex((item) => item.id === reservationId);
+    return index < 0 ? 0 : index;
+  }
+
+  const availability = useMemo(() => {
+    return slots.map((slot) => {
+      const used = getReservationsForSlot(selectedDate, slot.time).length;
+      const available = Math.max(Number(slot.docks || 1) - used, 0);
+      return { ...slot, used, available, full: available === 0 };
+    });
+  }, [slots, selectedDate, reservations]);
+
+  const adminRows = useMemo(() => {
+    return slots.map((slot) => {
+      const slotReservations = getReservationsForSlot(adminDate, slot.time);
+      return { ...slot, used: slotReservations.length, available: Math.max(Number(slot.docks || 1) - slotReservations.length, 0), reservations: slotReservations };
+    });
+  }, [slots, adminDate, reservations]);
+
+  const ganttReservations = useMemo(() => {
+    return reservations
+      .filter((reservation) => reservation.date === ganttDate && reservation.status !== "Cancelada")
+      .map((reservation) => {
+        const slot = getSlotByTime(slots, reservation.time);
+        const duration = slot ? slot.slotMinutes : 30;
+        const dockIndex = getDockIndexForReservation(reservation.date, reservation.time, reservation.id);
+        return { ...reservation, endTime: addMinutes(reservation.time, duration), duration, dockIndex };
+      })
+      .filter((reservation) => reservation.dockIndex < maxDocks);
+  }, [reservations, ganttDate, slots, maxDocks]);
+
+  const canSubmit = Boolean(form.plate.trim() && form.awb.trim() && form.company.trim() && form.phone.trim() && selectedDate && selectedSlot);
+
+  function createReservation() {
+    const selectedSlotInfo = getSlotByTime(slots, selectedSlot);
+    const capacity = selectedSlotInfo ? Number(selectedSlotInfo.docks || 1) : 1;
+    const usedNow = getReservationsForSlot(selectedDate, selectedSlot).length;
+
+    if (usedNow >= capacity) {
+      setMessage({ type: "error", text: "Ese slot acaba de ocuparse. Selecciona otro horario." });
+      return;
+    }
+
+    const assignedDockIndex = findFirstAvailableDock(reservations, selectedDate, selectedSlot, capacity);
+
+    const newReservation = {
+      id: "RSV-" + Math.floor(100000 + Math.random() * 900000),
+      date: selectedDate,
+      time: selectedSlot,
+      plate: form.plate.trim().toUpperCase(),
+      awb: form.awb.trim(),
+      company: form.company.trim(),
+      contact: form.contact.trim(),
+      phone: form.phone.trim(),
+      operation: form.operation,
+      notes: form.notes.trim(),
+      status: "Confirmada",
+      createdAt: new Date().toLocaleString(),
+      dockIndex: assignedDockIndex,
+    };
+
+    setReservations((current) => current.concat(newReservation));
+    setMessage({ type: "success", text: "Reserva confirmada: " + newReservation.id });
+    setSelectedSlot("");
+    setForm({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
+  }
+
+  function cancelReservation(id) {
+    setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
+  }
+
+  function moveReservationToDock(id, dockIndex) {
+    const targetReservation = reservations.find((reservation) => reservation.id === id);
+    if (!targetReservation) return;
+
+    const slot = getSlotByTime(slots, targetReservation.time);
+    const capacity = slot ? Number(slot.docks || 1) : maxDocks;
+    const targetDockIndex = Number(dockIndex);
+
+    if (targetDockIndex >= capacity) {
+      setMessage({ type: "error", text: "Ese muelle no esta abierto para la franja de esta reserva." });
+      return;
+    }
+
+    if (!isDockAvailable(reservations, id, targetReservation.date, targetReservation.time, targetDockIndex)) {
+      setMessage({ type: "error", text: "Ese muelle ya esta ocupado en el mismo slot. Elige otro muelle." });
+      return;
+    }
+
+    setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, dockIndex: targetDockIndex } : reservation)));
+    setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle " + dockName(targetDockIndex) + "." });
+  }
+
+  function exportCsv() {
+    const rows = reservations.filter((reservation) => reservation.date === adminDate);
+    const headers = ["ID", "Fecha", "Hora", "Estado", "Operacion", "Matricula", "AWB", "Empresa", "Contacto", "Telefono", "Creada"];
+    const csvRows = [headers.join(";")].concat(
+      rows.map((reservation) =>
+        [reservation.id, reservation.date, reservation.time, reservation.status, reservation.operation, reservation.plate, reservation.awb, reservation.company, reservation.contact, reservation.phone, reservation.createdAt].map(escapeCsv).join(";")
+      )
+    );
+    const newLine = String.fromCharCode(10);
+    const blob = new Blob([csvRows.join(newLine)], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "reservas_muelles_" + adminDate + ".csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function updateRange(id, field, value) {
+    setConfig((current) => ({
+      ...current,
+      timeRanges: current.timeRanges.map((range) => (range.id === id ? { ...range, [field]: field === "slotMinutes" || field === "docks" ? Number(value) || 1 : value } : range)),
+    }));
+  }
+
+  function addRange() {
+    setConfig((current) => ({
+      ...current,
+      timeRanges: current.timeRanges.concat({ id: "FR-" + Date.now(), startTime: "20:00", endTime: "22:00", slotMinutes: 30, docks: 2 }),
+    }));
+  }
+
+  function removeRange(id) {
+    setConfig((current) => {
+      if (current.timeRanges.length <= 1) return current;
+      return { ...current, timeRanges: current.timeRanges.filter((range) => range.id !== id) };
+    });
+  }
+
+  const activeReservations = reservations.filter((reservation) => reservation.date === adminDate && reservation.status !== "Cancelada");
+
+  function tabStyle(tabName) {
+    return activeTab === tabName ? { ...s.tab, ...s.activeTab } : s.tab;
+  }
+
+  function renderGantt() {
+    const startMinutes = timeToMinutes(dayStart);
+    const endMinutes = timeToMinutes(dayEnd);
+    const totalMinutes = Math.max(endMinutes - startMinutes, 1);
+    const hourMarks = [];
+    let mark = Math.ceil(startMinutes / 60) * 60;
+    while (mark <= endMinutes) {
+      hourMarks.push(mark);
+      mark += 60;
+    }
+
+    return (
+      <div style={s.ganttWrapper}>
+        <div style={s.ganttHeader}>
+          <div style={{ padding: 12, fontWeight: 700 }}>Muelle</div>
+          <div style={{ position: "relative", height: 46 }}>
+            {hourMarks.map((minute) => {
+              const left = ((minute - startMinutes) / totalMinutes) * 100;
+              return <div key={minute} style={{ position: "absolute", left: left + "%", top: 8, fontSize: 12, color: "#64748b" }}>{minutesToTime(minute)}</div>;
+            })}
+          </div>
+        </div>
+
+        {Array.from({ length: maxDocks }).map((_, dockIndex) => (
+          <div style={s.ganttRow} key={dockIndex}>
+            <div style={{ padding: 12, fontWeight: 800, background: "#f8fafc" }}>Muelle {dockName(dockIndex)}</div>
+            <div style={{ position: "relative", height: 64, background: "linear-gradient(to right, #f8fafc, #ffffff)" }}>
+              {hourMarks.map((minute) => {
+                const left = ((minute - startMinutes) / totalMinutes) * 100;
+                return <div key={minute} style={{ position: "absolute", left: left + "%", top: 0, bottom: 0, borderLeft: "1px solid #e2e8f0" }} />;
+              })}
+              {ganttReservations.filter((reservation) => reservation.dockIndex === dockIndex).map((reservation) => {
+                const left = ((timeToMinutes(reservation.time) - startMinutes) / totalMinutes) * 100;
+                const width = (reservation.duration / totalMinutes) * 100;
+                return (
+                  <div key={reservation.id} title={reservation.id + " - " + reservation.plate + " - " + reservation.awb} style={{ position: "absolute", left: left + "%", top: 10, width: Math.max(width, 3) + "%", minWidth: 80, height: 44, borderRadius: 12, background: reservation.operation === "Carga" ? "#dbeafe" : "#dcfce7", border: "1px solid #94a3b8", padding: "6px 8px", overflow: "hidden", fontSize: 12 }}>
+                    <strong>{reservation.time}-{reservation.endTime}</strong>
+                    <div>{reservation.plate}</div>
+                    <div>Muelle {dockName(reservation.dockIndex)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <main style={s.page}>
+      <header style={s.hero}>
+        <div>
+          <p style={s.eyebrow}>Terminal de carga - Gestion de muelles</p>
+          <h1 style={{ margin: 0, fontSize: 34 }}>Reserva de slots de carga y descarga</h1>
+          <p style={s.heroText}>Herramienta para repartir llegadas de transportistas, evitar saturacion y mostrar ocupacion por franja horaria.</p>
+        </div>
+        <div style={s.configSummary}>
+          <strong>Configuracion actual</strong>
+          <span>{config.timeRanges.length} franjas - hasta {maxDocks} muelles - {dayStart}-{dayEnd}</span>
+        </div>
+      </header>
+
+      <nav style={s.tabs}>
+        <button style={tabStyle("transportista")} onClick={() => setActiveTab("transportista")}>Transportista</button>
+        <button style={tabStyle("admin")} onClick={() => setActiveTab("admin")}>Panel interno</button>
+        <button style={tabStyle("gantt")} onClick={() => setActiveTab("gantt")}>Gantt muelles</button>
+        <button style={tabStyle("config")} onClick={() => setActiveTab("config")}>Configuracion</button>
+      </nav>
+
+      {activeTab === "transportista" && (
+        <section style={s.gridTwo}>
+          <div style={s.card}>
+            <h2 style={{ margin: 0 }}>Datos de identificacion</h2>
+            <p style={s.muted}>Introduce los datos minimos para reservar un hueco.</p>
+
+            <label style={s.label}>Matricula tractora *<input style={s.input} value={form.plate} onChange={(event) => updateForm("plate", event.target.value)} placeholder="Ej. 1234ABC" /></label>
+            <label style={s.label}>AWB / Referencia *<input style={s.input} value={form.awb} onChange={(event) => updateForm("awb", event.target.value)} placeholder="Ej. 075-12345678" /></label>
+            <label style={s.label}>Empresa transportista *<input style={s.input} value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Nombre de la empresa" /></label>
+            <label style={s.label}>Contacto<input style={s.input} value={form.contact} onChange={(event) => updateForm("contact", event.target.value)} placeholder="Nombre del conductor/contacto" /></label>
+            <label style={s.label}>Telefono / email *<input style={s.input} value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="Telefono o email" /></label>
+            <label style={s.label}>Tipo de operacion<select style={s.input} value={form.operation} onChange={(event) => updateForm("operation", event.target.value)}><option>Carga</option><option>Descarga</option><option>Carga y descarga</option></select></label>
+          </div>
+
+          <div style={s.card}>
+            <div style={s.sectionHeader}>
+              <div>
+                <h2 style={{ margin: 0 }}>Selecciona dia y slot</h2>
+                <p style={s.muted}>Cada slot usa la duracion y capacidad de su franja horaria configurada.</p>
+              </div>
+              <label style={{ ...s.label, marginTop: 0, minWidth: 180 }}>Fecha<input style={s.input} type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label>
+            </div>
+
+            {message && <div style={message.type === "success" ? s.success : s.error}>{message.text}</div>}
+
+            <div style={s.slotGrid}>
+              {availability.map((slot) => {
+                const currentSlotStyle = slot.full ? { ...s.slot, ...s.slotFull } : selectedSlot === slot.time ? { ...s.slot, ...s.slotSelected } : s.slot;
+                const availableText = slot.full ? "Completo" : slot.available + " hueco" + (slot.available === 1 ? "" : "s") + " disponible" + (slot.available === 1 ? "" : "s");
+                return (
+                  <button key={slot.rangeId + slot.time} disabled={slot.full} style={currentSlotStyle} onClick={() => setSelectedSlot(slot.time)}>
+                    <strong style={{ display: "block", fontSize: 20 }}>{slot.time}</strong>
+                    <span style={{ display: "block", marginTop: 8 }}>{availableText}</span>
+                    <small style={{ display: "block", marginTop: 8 }}>{slot.slotMinutes} min - {slot.used}/{slot.docks} muelles</small>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={s.confirmBox}>
+              <div>
+                <strong>Slot seleccionado: {selectedSlot || "ninguno"}</strong>
+                <p style={{ margin: "6px 0 0", color: "#64748b" }}>Al confirmar se vuelve a validar la disponibilidad para evitar doble reserva.</p>
+              </div>
+              <button style={canSubmit ? s.primaryButton : { ...s.primaryButton, ...s.disabledButton }} disabled={!canSubmit} onClick={createReservation}>Confirmar reserva</button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "admin" && (
+        <section style={s.card}>
+          <div style={s.sectionHeader}>
+            <div>
+              <h2 style={{ margin: 0 }}>Panel interno de reservas</h2>
+              <p style={s.muted}>Vista operativa por franja, ocupacion y detalle de transportistas.</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
+              <label style={{ ...s.label, marginTop: 0 }}>Fecha<input style={s.input} type="date" value={adminDate} onChange={(event) => setAdminDate(event.target.value)} /></label>
+              <button style={s.secondaryButton} onClick={exportCsv}>Exportar CSV</button>
+            </div>
+          </div>
+
+          <div style={s.stats}>
+            <div style={s.stat}><span>Reservas activas</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{activeReservations.length}</strong></div>
+            <div style={s.stat}><span>Capacidad diaria</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{slots.reduce((sum, slot) => sum + Number(slot.docks || 0), 0)}</strong></div>
+            <div style={s.stat}><span>Maximo muelles</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{maxDocks}</strong></div>
+          </div>
+
+          <div style={s.table}>
+            <div style={s.tableHeader}><span>Hora</span><span>Ocupacion</span><span>Reservas</span></div>
+            {adminRows.map((row) => (
+              <div style={s.tableRow} key={row.rangeId + row.time}>
+                <strong>{row.time}</strong>
+                <span style={row.available === 0 ? { ...s.badge, ...s.dangerBadge } : s.badge}>{row.used}/{row.docks} - {row.slotMinutes} min</span>
+                <div>
+                  {row.reservations.length === 0 && <span style={{ color: "#94a3b8" }}>Sin reservas</span>}
+                  {row.reservations.map((reservation) => (
+                    <div style={s.reservationItem} key={reservation.id}>
+                      <div>
+                        <strong>{reservation.id} - {reservation.operation} - {reservation.plate}</strong>
+                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>AWB {reservation.awb} - {reservation.company} - {reservation.phone}</p>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={s.badge}>{reservation.status}</span>
+                        {reservation.status !== "Cancelada" && <button style={s.secondaryButton} onClick={() => cancelReservation(reservation.id)}>Cancelar</button>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {activeTab === "gantt" && (
+        <section style={s.card}>
+          <div style={s.sectionHeader}>
+            <div>
+              <h2 style={{ margin: 0 }}>Gantt de ocupacion por muelle</h2>
+              <p style={s.muted}>Vista de ocupacion por muelle. Puedes reasignar manualmente reservas entre Muelle A, B, C, D...</p>
+            </div>
+            <label style={{ ...s.label, marginTop: 0, minWidth: 180 }}>Fecha<input style={s.input} type="date" value={ganttDate} onChange={(event) => setGanttDate(event.target.value)} /></label>
+          </div>
+          {renderGantt()}
+          <div style={{ marginTop: 20 }}>
+            <h3 style={{ margin: "0 0 12px" }}>Asignacion manual de muelles</h3>
+            {message && <div style={message.type === "success" ? s.success : s.error}>{message.text}</div>}
+            {ganttReservations.length === 0 && <p style={s.muted}>No hay reservas activas para esta fecha.</p>}
+            {ganttReservations.map((reservation) => {
+              const slot = getSlotByTime(slots, reservation.time);
+              const capacity = slot ? Number(slot.docks || 1) : maxDocks;
+              return (
+                <div style={s.reservationItem} key={reservation.id}>
+                  <div>
+                    <strong>{reservation.id} - {reservation.time}-{reservation.endTime} - {reservation.plate}</strong>
+                    <p style={{ margin: "5px 0 0", color: "#64748b" }}>AWB {reservation.awb} - {reservation.company} - muelle actual {dockName(reservation.dockIndex)}</p>
+                  </div>
+                  <label style={{ ...s.label, marginTop: 0, minWidth: 160 }}>
+                    Mover a muelle
+                    <select style={s.input} value={reservation.dockIndex} onChange={(event) => moveReservationToDock(reservation.id, event.target.value)}>
+                      {Array.from({ length: capacity }).map((_, dockIndex) => (
+                        <option key={dockIndex} value={dockIndex}>Muelle {dockName(dockIndex)}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+          <div style={s.warning}>Si el muelle elegido ya esta ocupado en el mismo slot, la app bloquea el cambio para evitar solapes.</div>
+        </section>
+      )}
+
+      {activeTab === "config" && (
+        <section style={s.card}>
+          <div style={s.sectionHeader}>
+            <div>
+              <h2 style={{ margin: 0 }}>Configuracion por franjas horarias</h2>
+              <p style={s.muted}>Puedes crear varias franjas con diferente duracion de slot y diferente numero de muelles abiertos.</p>
+            </div>
+            <button style={s.primaryButton} onClick={addRange}>Anadir franja</button>
+          </div>
+
+          {config.timeRanges.map((range, index) => (
+            <div style={s.rangeCard} key={range.id}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                <strong>Franja {index + 1}</strong>
+                <button style={config.timeRanges.length <= 1 ? { ...s.dangerButton, ...s.disabledButton } : s.dangerButton} disabled={config.timeRanges.length <= 1} onClick={() => removeRange(range.id)}>Eliminar</button>
+              </div>
+              <div style={s.configGrid}>
+                <label style={s.label}>Hora inicio<input style={s.input} type="time" value={range.startTime} onChange={(event) => updateRange(range.id, "startTime", event.target.value)} /></label>
+                <label style={s.label}>Hora fin<input style={s.input} type="time" value={range.endTime} onChange={(event) => updateRange(range.id, "endTime", event.target.value)} /></label>
+                <label style={s.label}>Duracion slot<select style={s.input} value={range.slotMinutes} onChange={(event) => updateRange(range.id, "slotMinutes", event.target.value)}><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option><option value="90">90 minutos</option></select></label>
+                <label style={s.label}>Muelles abiertos<input style={s.input} type="number" min="1" value={range.docks} onChange={(event) => updateRange(range.id, "docks", event.target.value)} /></label>
+              </div>
+              <p style={{ ...s.muted, marginBottom: 0 }}>Slots generados en esta franja: {buildSlotsForRange(range).length}</p>
+            </div>
+          ))}
+
+          <div style={s.warning}>Evita solapar franjas si quieres una disponibilidad limpia. Si dos franjas tienen la misma hora de inicio, el sistema las mostrara como slots separados con la misma hora.</div>
+        </section>
+      )}
+    </main>
+  );
+}
