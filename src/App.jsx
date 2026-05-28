@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const initialConfig = {
   occupancyThresholds: {
@@ -13,8 +13,8 @@ const initialConfig = {
   ],
 };
 
-const SUPABASE_URL = "https://ppdmzpejjlwwqxurqvgq.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_apQrgWIC1ZgbeUJI6vQ6pQ_OCzakgvQ";
+const SUPABASE_URL = "PEGA_AQUI_TU_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_SUPABASE_ANON_KEY";
 const SUPABASE_TABLE = "reservations";
 
 const ADMIN_USERNAME = "admin";
@@ -316,6 +316,10 @@ function getOccupancyBadgeStyle(used, capacity, thresholds) {
   return styles[level] || styles.green;
 }
 
+function shouldBlockSlotSelection(reservations, email, date) {
+  return hasReservationForEmailOnDate(reservations, email, date);
+}
+
 const baseStyles = {
   page: { maxWidth: 1320, margin: "0 auto", padding: 24, fontFamily: "Arial, Helvetica, sans-serif", color: "#172033" },
   hero: { background: "white", borderRadius: 24, padding: 24, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)", display: "flex", justifyContent: "space-between", gap: 24, alignItems: "center", marginBottom: 20, flexWrap: "wrap" },
@@ -356,6 +360,26 @@ const baseStyles = {
   ganttWrapper: { overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 18, background: "white" },
   ganttHeader: { display: "grid", gridTemplateColumns: "90px 1fr", minWidth: 900, borderBottom: "1px solid #e2e8f0", background: "#f1f5f9" },
   ganttRow: { display: "grid", gridTemplateColumns: "90px 1fr", minWidth: 900, borderBottom: "1px solid #e2e8f0" },
+  homeShell: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(280px, 0.9fr)", gap: 22, alignItems: "stretch" },
+  homePrimaryCard: { position: "relative", overflow: "hidden", background: "linear-gradient(135deg, #172033 0%, #26364f 52%, #0f766e 100%)", color: "white", borderRadius: 30, padding: 38, minHeight: 360, boxShadow: "0 22px 50px rgba(15, 23, 42, 0.22)", display: "grid", alignContent: "space-between", gap: 24 },
+  homePrimaryOverlay: { position: "absolute", right: -90, top: -90, width: 260, height: 260, borderRadius: 999, background: "rgba(255,255,255,0.10)" },
+  homeTitle: { margin: 0, fontSize: 42, lineHeight: 1.05, letterSpacing: -0.8, maxWidth: 720 },
+  homeLead: { margin: "16px 0 0", color: "rgba(255,255,255,0.82)", fontSize: 18, lineHeight: 1.6, maxWidth: 720 },
+  homeActions: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" },
+  homePrimaryButton: { border: 0, borderRadius: 16, padding: "16px 22px", fontWeight: 800, cursor: "pointer", background: "white", color: "#172033", fontSize: 17, boxShadow: "0 14px 30px rgba(0,0,0,0.16)" },
+  homeGhostBadge: { display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", borderRadius: 999, padding: "8px 12px", background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.92)", fontWeight: 800, fontSize: 13 },
+  homeFeatureGrid: { display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 24 },
+  homeFeature: { background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 18, padding: 16 },
+  homeFeatureValue: { display: "block", fontSize: 22, fontWeight: 900, marginBottom: 4 },
+  homeFeatureLabel: { color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 1.3 },
+  homeStepListDark: { display: "grid", gap: 12, marginTop: 24, maxWidth: 680 },
+  homeStepItemDark: { display: "flex", gap: 12, alignItems: "flex-start", color: "rgba(255,255,255,0.86)", lineHeight: 1.45, fontWeight: 700 },
+  dotLight: { width: 9, height: 9, borderRadius: 999, background: "#99f6e4", marginTop: 6, flex: "0 0 auto" },
+  homeSideCard: { background: "white", borderRadius: 26, padding: 22, boxShadow: "0 14px 34px rgba(15, 23, 42, 0.10)", border: "1px solid #e2e8f0", display: "grid", gap: 16, alignContent: "space-between" },
+  homeAdminBox: { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 20, padding: 16 },
+  homeMiniList: { display: "grid", gap: 10, margin: "8px 0 0" },
+  homeMiniItem: { display: "flex", gap: 10, alignItems: "flex-start", color: "#475569", lineHeight: 1.35 },
+  dot: { width: 8, height: 8, borderRadius: 999, background: "#0f766e", marginTop: 5, flex: "0 0 auto" },
 };
 
 function useIsMobile() {
@@ -408,6 +432,17 @@ function createResponsiveStyles(isMobile) {
     ganttWrapper: { ...baseStyles.ganttWrapper, overflowX: "auto", WebkitOverflowScrolling: "touch" },
     ganttHeader: { ...baseStyles.ganttHeader, minWidth: 760, gridTemplateColumns: "80px 1fr" },
     ganttRow: { ...baseStyles.ganttRow, minWidth: 760, gridTemplateColumns: "80px 1fr" },
+    homeShell: { ...baseStyles.homeShell, gridTemplateColumns: "1fr", gap: 14 },
+    homePrimaryCard: { ...baseStyles.homePrimaryCard, padding: 22, minHeight: "auto", borderRadius: 22, gap: 20 },
+    homeTitle: { ...baseStyles.homeTitle, fontSize: 30, lineHeight: 1.12 },
+    homeLead: { ...baseStyles.homeLead, fontSize: 16 },
+    homeActions: { ...baseStyles.homeActions, display: "grid", gridTemplateColumns: "1fr", width: "100%" },
+    homePrimaryButton: { ...baseStyles.homePrimaryButton, width: "100%", minHeight: 52 },
+    homeFeatureGrid: { ...baseStyles.homeFeatureGrid, gridTemplateColumns: "1fr", gap: 10, marginTop: 18 },
+    homeSideCard: { ...baseStyles.homeSideCard, borderRadius: 20, padding: 16 },
+    homeStepListDark: { ...baseStyles.homeStepListDark, gap: 10, marginTop: 18 },
+    homeAdminBox: { ...baseStyles.homeAdminBox, padding: 14 },
+    homePrimaryOverlay: { ...baseStyles.homePrimaryOverlay, right: -130, top: -130 },
   };
 }
 
@@ -431,6 +466,7 @@ function runBasicTests() {
   console.assert(isValidEmail("transportista@demo.com") === true, "isValidEmail should accept valid emails");
   console.assert(isValidEmail("transportista-demo") === false, "isValidEmail should reject invalid emails");
   console.assert(hasReservationForEmailOnDate([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "A@B.COM", "2026-01-01") === true, "hasReservationForEmailOnDate should detect one active reservation per email and day");
+  console.assert(shouldBlockSlotSelection([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "a@b.com", "2026-01-01") === true, "shouldBlockSlotSelection should block slot selection when an active reservation exists for the day");
   console.assert(getMondayOfWeek("2026-01-01") === "2025-12-29", "getMondayOfWeek should return the Monday of the selected week");
   console.assert(getWeekDays("2026-01-01").length === 7, "getWeekDays should return 7 days");
   console.assert(countActiveReservationsForDate([{ date: "2026-01-01", status: "Confirmada" }, { date: "2026-01-01", status: "Cancelada" }], "2026-01-01") === 1, "countActiveReservationsForDate should count only active reservations");
@@ -443,6 +479,8 @@ function runBasicTests() {
   console.assert(createResponsiveStyles(false).gridTwo.gridTemplateColumns !== "1fr", "desktop styles should keep two-column booking layout");
   console.assert(createResponsiveStyles(true).gridTwo.gridTemplateColumns === "1fr", "mobile styles should use one-column booking layout");
   console.assert(createResponsiveStyles(true).primaryButton.width === "100%", "mobile buttons should be full width");
+  console.assert(createResponsiveStyles(false).homeShell.gridTemplateColumns.includes("2fr"), "desktop home should prioritize transporter card");
+  console.assert(createResponsiveStyles(true).homeShell.gridTemplateColumns === "1fr", "mobile home should stack cards cleanly");
 }
 
 runBasicTests();
@@ -469,6 +507,8 @@ export default function App() {
   const [adminView, setAdminView] = useState("diaria");
   const [ganttDate, setGanttDate] = useState(todayIso());
   const [message, setMessage] = useState(null);
+  const messageRef = useRef(null);
+  const [bookingLimitWarning, setBookingLimitWarning] = useState(false);
   const [loginMessage, setLoginMessage] = useState(null);
   const [form, setForm] = useState({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
@@ -505,6 +545,27 @@ export default function App() {
 
   function updateForm(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function scrollToMessage() {
+    window.setTimeout(() => {
+      if (messageRef.current) {
+        messageRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }, 80);
+  }
+
+  function selectTransporterSlot(slotTime) {
+    if (shouldBlockSlotSelection(reservations, transporterEmail, selectedDate)) {
+      setBookingLimitWarning(true);
+      setSelectedSlot("");
+      return;
+    }
+
+    setBookingLimitWarning(false);
+    setSelectedSlot(slotTime);
   }
 
   function getReservationsForSlot(date, time) {
@@ -571,6 +632,7 @@ export default function App() {
     setTransporterEmail(cleanEmail);
     setLoginMessage(null);
     setMessage(null);
+    setBookingLimitWarning(false);
     setActiveTab("reservar");
   }
 
@@ -578,6 +640,7 @@ export default function App() {
     setTransporterEmail("");
     setEmailInput("");
     setMessage(null);
+    setBookingLimitWarning(false);
     setActiveTab("reservar");
     setAppMode("home");
   }
@@ -585,10 +648,12 @@ export default function App() {
   async function createReservation() {
     if (!transporterEmail) {
       setMessage({ type: "error", text: "Primero accede con tu correo electronico." });
+      scrollToMessage();
       return;
     }
     if (hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate)) {
-      setMessage({ type: "error", text: "Ya tienes una reserva activa para este dia. Solo se permite una reserva por dia." });
+      setBookingLimitWarning(true);
+      setSelectedSlot("");
       return;
     }
 
@@ -598,6 +663,7 @@ export default function App() {
 
     if (usedNow >= capacity) {
       setMessage({ type: "error", text: "Ese slot acaba de ocuparse. Selecciona otro horario." });
+      scrollToMessage();
       return;
     }
 
@@ -625,11 +691,14 @@ export default function App() {
       const savedReservation = await insertReservationInDb(newReservation);
       setReservations((current) => current.concat(savedReservation));
       setMessage({ type: "success", text: "Reserva confirmada: " + savedReservation.id + ". Codigo: " + savedReservation.confirmationCode + "." });
+      setBookingLimitWarning(false);
+      scrollToMessage();
       setSelectedSlot("");
       setForm({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
       await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
+      scrollToMessage();
     }
   }
 
@@ -737,6 +806,7 @@ export default function App() {
     setAppMode("home");
     setActiveTab("reservar");
     setMessage(null);
+    setBookingLimitWarning(false);
     setLoginMessage(null);
     setAdminLoginMessage(null);
   }
@@ -821,36 +891,34 @@ export default function App() {
 
   return (
     <main style={rs.page}>
-      <header style={rs.hero}>
-        <div>
-          <p style={rs.eyebrow}>Terminal de carga - Gestion de muelles</p>
-          <h1 style={{ margin: 0, fontSize: isMobile ? 26 : 34 }}>Reserva de slots de carga y descarga</h1>
-          <p style={rs.heroText}>Herramienta para repartir llegadas de transportistas, evitar saturacion y mostrar ocupacion por franja horaria.</p>
-        </div>
-        <div style={rs.configSummary}>
-          <strong>Configuracion actual</strong>
-          <span>{config.timeRanges.length} franjas - hasta {maxDocks} muelles - {dayStart}-{dayEnd}</span>
-          <span style={{ display: "block", marginTop: 8, color: dbStatus.error ? "#92400e" : "#166534", fontSize: 13 }}>
-            {dbStatus.loading ? "Sincronizando reservas..." : dbStatus.error ? dbStatus.error : "Reservas sincronizadas" + (dbStatus.lastSync ? " a las " + dbStatus.lastSync : "")}
-          </span>
-        </div>
-      </header>
-
       {appMode === "home" && (
-        <section style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr", gap: 18, alignItems: "stretch" }}>
-          <div style={{ ...rs.card, padding: isMobile ? 20 : 32 }}>
-            <p style={rs.eyebrow}>Acceso principal</p>
-            <h2 style={{ margin: 0, fontSize: isMobile ? 26 : 34 }}>Soy transportista</h2>
-            <p style={{ ...rs.muted, fontSize: 18, lineHeight: 1.5 }}>Entra con tu correo electronico, consulta disponibilidad y reserva tu slot de carga o descarga.</p>
-            <button style={{ ...rs.primaryButton, marginTop: 10, fontSize: 18, padding: "16px 20px" }} onClick={openTransporterMode}>Entrar como transportista</button>
+        <section style={rs.homeShell}>
+          <div style={rs.homePrimaryCard}>
+            <div style={rs.homePrimaryOverlay} />
+            <div style={{ position: "relative" }}>
+              <span style={rs.homeGhostBadge}>✓ Acceso para transportistas</span>
+              <h2 style={rs.homeTitle}>Reserva tu slot de carga o descarga sin esperas.</h2>
+              <p style={rs.homeLead}>Consulta la ocupacion de los muelles en tiempo real, elige el horario que mejor encaje con tu ruta y recibe tu codigo de confirmacion.</p>
+              <div style={rs.homeStepListDark}>
+                <div style={rs.homeStepItemDark}><span style={rs.dotLight} /><span>Identificate con tu correo electronico.</span></div>
+                <div style={rs.homeStepItemDark}><span style={rs.dotLight} /><span>Selecciona el dia y un slot disponible.</span></div>
+                <div style={rs.homeStepItemDark}><span style={rs.dotLight} /><span>Guarda tu codigo de confirmacion para la llegada.</span></div>
+              </div>
+            </div>
+            <div style={{ ...rs.homeActions, position: "relative" }}>
+              <button style={rs.homePrimaryButton} onClick={openTransporterMode}>Entrar como transportista</button>
+              <span style={{ color: "rgba(255,255,255,0.72)", fontSize: 14 }}>Solo necesitas tu correo electronico.</span>
+            </div>
           </div>
 
-          <div style={{ ...rs.card, padding: isMobile ? 16 : 18, opacity: 0.95 }}>
-            <p style={rs.eyebrow}>Acceso interno</p>
-            <h3 style={{ margin: 0 }}>Administrador</h3>
-            <p style={rs.muted}>Panel interno para gestionar reservas, Gantt y configuracion.</p>
-            <button style={rs.secondaryButton} onClick={openAdminMode}>Login administrador</button>
-          </div>
+          <aside style={rs.homeSideCard}>
+            <div style={rs.homeAdminBox}>
+              <p style={{ ...rs.eyebrow, marginBottom: 6 }}>Acceso interno</p>
+              <h4 style={{ margin: "0 0 8px", fontSize: 17 }}>Administrador</h4>
+              <p style={{ ...rs.muted, margin: "0 0 14px", fontSize: 14 }}>Panel privado para gestionar reservas, Gantt y configuracion.</p>
+              <button style={{ ...rs.secondaryButton, width: "100%" }} onClick={openAdminMode}>Login administrador</button>
+            </div>
+          </aside>
         </section>
       )}
 
@@ -924,18 +992,18 @@ export default function App() {
               <div>
                 <h2 style={{ margin: 0 }}>Selecciona dia y slot</h2>
                 <p style={rs.muted}>Cada slot usa la duracion y capacidad de su franja horaria configurada.</p>
-                {alreadyBookedSelectedDate && <p style={{ ...rs.error, marginTop: 12 }}>Ya tienes una reserva activa para este dia. Solo se permite una reserva diaria por correo.</p>}
+                {bookingLimitWarning && <p style={{ ...rs.error, marginTop: 12 }}>Ya tienes una reserva activa para este dia. Solo se permite una reserva diaria por correo.</p>}
               </div>
-              <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>Fecha<input style={rs.input} type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} /></label>
+              <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>Fecha<input style={rs.input} type="date" value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setBookingLimitWarning(false); setSelectedSlot(""); }} /></label>
             </div>
-            {message && <div style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+            {message && <div ref={messageRef} style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
             <div style={rs.slotGrid}>
               {availability.map((slot) => {
                 const occupancyStyle = getOccupancyBadgeStyle(slot.used, slot.docks, config.occupancyThresholds);
                 const currentSlotStyle = selectedSlot === slot.time ? { ...rs.slot, ...rs.slotSelected } : slot.full ? { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.color, cursor: "not-allowed" } : { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.color };
                 const availableText = slot.full ? "Completo" : slot.available + " hueco" + (slot.available === 1 ? "" : "s") + " disponible" + (slot.available === 1 ? "" : "s");
                 return (
-                  <button key={slot.rangeId + slot.time} disabled={slot.full} style={currentSlotStyle} onClick={() => setSelectedSlot(slot.time)}>
+                  <button key={slot.rangeId + slot.time} disabled={slot.full} style={currentSlotStyle} onClick={() => selectTransporterSlot(slot.time)}>
                     <strong style={{ display: "block", fontSize: 20 }}>{slot.time}</strong>
                     <span style={{ display: "block", marginTop: 8 }}>{availableText}</span>
                     <small style={{ display: "block", marginTop: 8 }}>{slot.slotMinutes} min - {slot.used}/{slot.docks} muelles</small>
