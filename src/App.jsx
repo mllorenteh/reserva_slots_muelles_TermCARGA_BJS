@@ -16,6 +16,7 @@ const initialConfig = {
 const SUPABASE_URL = "PEGA_AQUI_TU_SUPABASE_URL";
 const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_SUPABASE_ANON_KEY";
 const SUPABASE_TABLE = "reservations";
+const LOCAL_RESERVATIONS_KEY = "slot-reservations-local";
 
 const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "admin123";
@@ -320,13 +321,52 @@ function shouldBlockSlotSelection(reservations, email, date) {
   return hasReservationForEmailOnDate(reservations, email, date);
 }
 
+function getReservationsForEmail(reservations, email) {
+  const cleanEmail = normalizeEmail(email);
+  return reservations
+    .filter((reservation) => normalizeEmail(reservation.email) === cleanEmail)
+    .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
+}
+
+function upsertReservationInList(reservations, reservationToSave) {
+  const exists = reservations.some((reservation) => reservation.id === reservationToSave.id);
+  if (!exists) return reservations.concat(reservationToSave);
+  return reservations.map((reservation) => (reservation.id === reservationToSave.id ? reservationToSave : reservation));
+}
+
+function setReservationStatusInList(reservations, id, status) {
+  return reservations.map((reservation) => (reservation.id === id ? { ...reservation, status } : reservation));
+}
+
+function canUseLocalStorage() {
+  return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function loadLocalReservations(fallbackReservations) {
+  if (!canUseLocalStorage()) return fallbackReservations;
+  try {
+    const stored = window.localStorage.getItem(LOCAL_RESERVATIONS_KEY);
+    if (!stored) return fallbackReservations;
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : fallbackReservations;
+  } catch (error) {
+    return fallbackReservations;
+  }
+}
+
+function saveLocalReservations(reservations) {
+  if (!canUseLocalStorage()) return;
+  try {
+    window.localStorage.setItem(LOCAL_RESERVATIONS_KEY, JSON.stringify(reservations));
+  } catch (error) {
+    console.warn("No se pudieron guardar las reservas en localStorage", error);
+  }
+}
+
 const baseStyles = {
   page: { maxWidth: 1320, margin: "0 auto", padding: 24, fontFamily: "Arial, Helvetica, sans-serif", color: "#172033" },
-  hero: { background: "white", borderRadius: 24, padding: 24, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)", display: "flex", justifyContent: "space-between", gap: 24, alignItems: "center", marginBottom: 20, flexWrap: "wrap" },
   card: { background: "white", borderRadius: 24, padding: 24, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)" },
   eyebrow: { margin: "0 0 8px", color: "#64748b", fontSize: 14, fontWeight: 700 },
-  heroText: { color: "#64748b", maxWidth: 720 },
-  configSummary: { minWidth: 300, background: "#f1f5f9", borderRadius: 18, padding: 16 },
   modeBar: { display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" },
   tabs: { display: "flex", gap: 8, background: "white", padding: 8, borderRadius: 18, width: "fit-content", marginBottom: 20, boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)", flexWrap: "wrap" },
   tab: { border: 0, background: "transparent", padding: "12px 18px", borderRadius: 14, cursor: "pointer", fontWeight: 700, color: "#475569" },
@@ -368,18 +408,11 @@ const baseStyles = {
   homeActions: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" },
   homePrimaryButton: { border: 0, borderRadius: 16, padding: "16px 22px", fontWeight: 800, cursor: "pointer", background: "white", color: "#172033", fontSize: 17, boxShadow: "0 14px 30px rgba(0,0,0,0.16)" },
   homeGhostBadge: { display: "inline-flex", alignItems: "center", gap: 8, width: "fit-content", borderRadius: 999, padding: "8px 12px", background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.92)", fontWeight: 800, fontSize: 13 },
-  homeFeatureGrid: { display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 24 },
-  homeFeature: { background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 18, padding: 16 },
-  homeFeatureValue: { display: "block", fontSize: 22, fontWeight: 900, marginBottom: 4 },
-  homeFeatureLabel: { color: "rgba(255,255,255,0.78)", fontSize: 13, lineHeight: 1.3 },
   homeStepListDark: { display: "grid", gap: 12, marginTop: 24, maxWidth: 680 },
   homeStepItemDark: { display: "flex", gap: 12, alignItems: "flex-start", color: "rgba(255,255,255,0.86)", lineHeight: 1.45, fontWeight: 700 },
   dotLight: { width: 9, height: 9, borderRadius: 999, background: "#99f6e4", marginTop: 6, flex: "0 0 auto" },
   homeSideCard: { background: "white", borderRadius: 26, padding: 22, boxShadow: "0 14px 34px rgba(15, 23, 42, 0.10)", border: "1px solid #e2e8f0", display: "grid", gap: 16, alignContent: "space-between" },
   homeAdminBox: { background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 20, padding: 16 },
-  homeMiniList: { display: "grid", gap: 10, margin: "8px 0 0" },
-  homeMiniItem: { display: "flex", gap: 10, alignItems: "flex-start", color: "#475569", lineHeight: 1.35 },
-  dot: { width: 8, height: 8, borderRadius: 999, background: "#0f766e", marginTop: 5, flex: "0 0 auto" },
 };
 
 function useIsMobile() {
@@ -407,9 +440,7 @@ function createResponsiveStyles(isMobile) {
   return {
     ...baseStyles,
     page: { ...baseStyles.page, padding: 12, maxWidth: "100%" },
-    hero: { ...baseStyles.hero, padding: 18, borderRadius: 18, alignItems: "stretch" },
     card: { ...baseStyles.card, padding: 16, borderRadius: 18 },
-    configSummary: { ...baseStyles.configSummary, minWidth: "100%" },
     modeBar: { ...baseStyles.modeBar, width: "100%", display: "grid", gridTemplateColumns: "1fr" },
     tabs: { ...baseStyles.tabs, width: "100%", display: "grid", gridTemplateColumns: "1fr", gap: 8, boxSizing: "border-box" },
     tab: { ...baseStyles.tab, width: "100%" },
@@ -438,7 +469,6 @@ function createResponsiveStyles(isMobile) {
     homeLead: { ...baseStyles.homeLead, fontSize: 16 },
     homeActions: { ...baseStyles.homeActions, display: "grid", gridTemplateColumns: "1fr", width: "100%" },
     homePrimaryButton: { ...baseStyles.homePrimaryButton, width: "100%", minHeight: 52 },
-    homeFeatureGrid: { ...baseStyles.homeFeatureGrid, gridTemplateColumns: "1fr", gap: 10, marginTop: 18 },
     homeSideCard: { ...baseStyles.homeSideCard, borderRadius: 20, padding: 16 },
     homeStepListDark: { ...baseStyles.homeStepListDark, gap: 10, marginTop: 18 },
     homeAdminBox: { ...baseStyles.homeAdminBox, padding: 14 },
@@ -467,6 +497,10 @@ function runBasicTests() {
   console.assert(isValidEmail("transportista-demo") === false, "isValidEmail should reject invalid emails");
   console.assert(hasReservationForEmailOnDate([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "A@B.COM", "2026-01-01") === true, "hasReservationForEmailOnDate should detect one active reservation per email and day");
   console.assert(shouldBlockSlotSelection([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "a@b.com", "2026-01-01") === true, "shouldBlockSlotSelection should block slot selection when an active reservation exists for the day");
+  console.assert(getReservationsForEmail([{ email: "A@B.COM", date: "2026-01-01", time: "09:00" }], "a@b.com").length === 1, "getReservationsForEmail should return reservations for the logged email");
+  console.assert(upsertReservationInList([{ id: "R1", status: "Confirmada" }], { id: "R1", status: "Cancelada" })[0].status === "Cancelada", "upsertReservationInList should replace an existing reservation");
+  console.assert(upsertReservationInList([{ id: "R1" }], { id: "R2" }).length === 2, "upsertReservationInList should add a new reservation");
+  console.assert(setReservationStatusInList([{ id: "R1", status: "Confirmada" }], "R1", "Cancelada")[0].status === "Cancelada", "setReservationStatusInList should update reservation status");
   console.assert(getMondayOfWeek("2026-01-01") === "2025-12-29", "getMondayOfWeek should return the Monday of the selected week");
   console.assert(getWeekDays("2026-01-01").length === 7, "getWeekDays should return 7 days");
   console.assert(countActiveReservationsForDate([{ date: "2026-01-01", status: "Confirmada" }, { date: "2026-01-01", status: "Cancelada" }], "2026-01-01") === 1, "countActiveReservationsForDate should count only active reservations");
@@ -508,6 +542,7 @@ export default function App() {
   const [ganttDate, setGanttDate] = useState(todayIso());
   const [message, setMessage] = useState(null);
   const messageRef = useRef(null);
+  const bookingLimitRef = useRef(null);
   const [bookingLimitWarning, setBookingLimitWarning] = useState(false);
   const [loginMessage, setLoginMessage] = useState(null);
   const [form, setForm] = useState({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
@@ -517,8 +552,9 @@ export default function App() {
 
   async function loadReservations() {
     if (!isSupabaseConfigured()) {
-      setReservations(initialReservations);
-      setDbStatus({ loading: false, error: "Supabase no configurado. Usando datos demo locales.", lastSync: "" });
+      const localReservations = loadLocalReservations(initialReservations);
+      setReservations(localReservations);
+      setDbStatus({ loading: false, error: "Supabase no configurado. Guardando reservas en este navegador.", lastSync: "" });
       return;
     }
 
@@ -528,7 +564,9 @@ export default function App() {
       setReservations(dbReservations);
       setDbStatus({ loading: false, error: "", lastSync: new Date().toLocaleTimeString() });
     } catch (error) {
-      setDbStatus({ loading: false, error: error.message, lastSync: "" });
+      const localReservations = loadLocalReservations(initialReservations);
+      setReservations(localReservations);
+      setDbStatus({ loading: false, error: error.message + " Usando copia local del navegador.", lastSync: "" });
     }
   }
 
@@ -557,10 +595,20 @@ export default function App() {
     }, 80);
   }
 
+  function scrollToBookingLimitWarning() {
+    window.setTimeout(() => {
+      if (bookingLimitRef.current) {
+        bookingLimitRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 80);
+  }
+
   function selectTransporterSlot(slotTime) {
     if (shouldBlockSlotSelection(reservations, transporterEmail, selectedDate)) {
+      setMessage(null);
       setBookingLimitWarning(true);
       setSelectedSlot("");
+      scrollToBookingLimitWarning();
       return;
     }
 
@@ -607,12 +655,7 @@ export default function App() {
       .filter((reservation) => reservation.dockIndex < maxDocks);
   }, [reservations, ganttDate, slots, maxDocks]);
 
-  const transporterReservations = useMemo(() => {
-    return reservations
-      .filter((reservation) => normalizeEmail(reservation.email) === normalizeEmail(transporterEmail))
-      .sort((a, b) => String(a.date + a.time).localeCompare(String(b.date + b.time)));
-  }, [reservations, transporterEmail]);
-
+  const transporterReservations = useMemo(() => getReservationsForEmail(reservations, transporterEmail), [reservations, transporterEmail]);
   const alreadyBookedSelectedDate = hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate);
   const canSubmit = Boolean(transporterEmail && !alreadyBookedSelectedDate && form.plate.trim() && form.awb.trim() && form.company.trim() && form.phone.trim() && selectedDate && selectedSlot);
 
@@ -652,8 +695,10 @@ export default function App() {
       return;
     }
     if (hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate)) {
+      setMessage(null);
       setBookingLimitWarning(true);
       setSelectedSlot("");
+      scrollToBookingLimitWarning();
       return;
     }
 
@@ -689,13 +734,16 @@ export default function App() {
 
     try {
       const savedReservation = await insertReservationInDb(newReservation);
-      setReservations((current) => current.concat(savedReservation));
-      setMessage({ type: "success", text: "Reserva confirmada: " + savedReservation.id + ". Codigo: " + savedReservation.confirmationCode + "." });
+      const nextReservations = upsertReservationInList(reservations, savedReservation);
+      setReservations(nextReservations);
+      if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
+      setMessage({ type: "success", text: "Reserva confirmada: " + savedReservation.id + ". Codigo: " + savedReservation.confirmationCode + ". Puedes verla y cancelarla desde Mi perfil / reservas." });
       setBookingLimitWarning(false);
+      setActiveTab("perfil");
       scrollToMessage();
       setSelectedSlot("");
       setForm({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
-      await loadReservations();
+      if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
       scrollToMessage();
@@ -705,8 +753,10 @@ export default function App() {
   async function cancelReservation(id) {
     try {
       await updateReservationInDb(id, { status: "Cancelada" });
-      setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
-      await loadReservations();
+      const nextReservations = setReservationStatusInList(reservations, id, "Cancelada");
+      setReservations(nextReservations);
+      if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
+      if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     }
@@ -725,9 +775,11 @@ export default function App() {
     }
     try {
       await updateReservationInDb(id, { status: "Cancelada" });
-      setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
+      const nextReservations = setReservationStatusInList(reservations, id, "Cancelada");
+      setReservations(nextReservations);
+      if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
       setMessage({ type: "success", text: "Reserva " + id + " cancelada correctamente." });
-      await loadReservations();
+      if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     }
@@ -992,7 +1044,7 @@ export default function App() {
               <div>
                 <h2 style={{ margin: 0 }}>Selecciona dia y slot</h2>
                 <p style={rs.muted}>Cada slot usa la duracion y capacidad de su franja horaria configurada.</p>
-                {bookingLimitWarning && <p style={{ ...rs.error, marginTop: 12 }}>Ya tienes una reserva activa para este dia. Solo se permite una reserva diaria por correo.</p>}
+                {bookingLimitWarning && <p ref={bookingLimitRef} style={{ ...rs.error, marginTop: 12 }}>No puedes reservar mas de un slot al dia. Si necesitas cambiar la cita, cancela primero tu reserva actual en Mi perfil / reservas.</p>}
               </div>
               <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>Fecha<input style={rs.input} type="date" value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setBookingLimitWarning(false); setSelectedSlot(""); }} /></label>
             </div>
@@ -1031,8 +1083,9 @@ export default function App() {
             </div>
             <button style={rs.secondaryButton} onClick={logoutTransporter}>Salir / cambiar correo</button>
           </div>
-          {message && <div style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+          {message && <div ref={messageRef} style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
           {transporterReservations.length === 0 && <p style={rs.muted}>Todavia no tienes reservas asociadas a este correo.</p>}
+          {transporterReservations.length > 0 && <p style={rs.muted}>Aqui puedes consultar tus reservas y cancelar una cita activa si necesitas cambiar de horario.</p>}
           {transporterReservations.map((reservation) => (
             <div style={rs.reservationItem} key={reservation.id}>
               <div>
