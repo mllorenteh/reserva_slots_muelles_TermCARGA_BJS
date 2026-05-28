@@ -13,6 +13,113 @@ const initialConfig = {
   ],
 };
 
+const SUPABASE_URL = "PEGA_AQUI_TU_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_SUPABASE_ANON_KEY";
+const SUPABASE_TABLE = "reservations";
+
+function isSupabaseConfigured() {
+  return SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.length > 30;
+}
+
+function supabaseHeaders(extraHeaders = {}) {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: "Bearer " + SUPABASE_ANON_KEY,
+    "Content-Type": "application/json",
+    ...extraHeaders,
+  };
+}
+
+function toAppReservation(row) {
+  return {
+    id: row.id,
+    email: row.email || "",
+    confirmationCode: row.confirmation_code || "",
+    date: row.date,
+    time: row.time,
+    plate: row.plate || "",
+    awb: row.awb || "",
+    company: row.company || "",
+    contact: row.contact || "",
+    phone: row.phone || "",
+    operation: row.operation || "Descarga",
+    notes: row.notes || "",
+    status: row.status || "Confirmada",
+    createdAt: row.created_at || "",
+    dockIndex: Number(row.dock_index || 0),
+  };
+}
+
+function toDbReservation(reservation) {
+  return {
+    id: reservation.id,
+    email: reservation.email,
+    confirmation_code: reservation.confirmationCode,
+    date: reservation.date,
+    time: reservation.time,
+    plate: reservation.plate,
+    awb: reservation.awb,
+    company: reservation.company,
+    contact: reservation.contact,
+    phone: reservation.phone,
+    operation: reservation.operation,
+    notes: reservation.notes,
+    status: reservation.status,
+    dock_index: reservation.dockIndex,
+  };
+}
+
+async function fetchReservationsFromDb() {
+  if (!isSupabaseConfigured()) return [];
+
+  const url = SUPABASE_URL + "/rest/v1/" + SUPABASE_TABLE + "?select=*&order=date.asc,time.asc,created_at.asc";
+  const response = await fetch(url, { headers: supabaseHeaders() });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error("No se pudieron cargar reservas: " + text);
+  }
+
+  const rows = await response.json();
+  return rows.map(toAppReservation);
+}
+
+async function insertReservationInDb(reservation) {
+  if (!isSupabaseConfigured()) return reservation;
+
+  const response = await fetch(SUPABASE_URL + "/rest/v1/" + SUPABASE_TABLE, {
+    method: "POST",
+    headers: supabaseHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify(toDbReservation(reservation)),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error("No se pudo guardar la reserva: " + text);
+  }
+
+  const rows = await response.json();
+  return toAppReservation(rows[0]);
+}
+
+async function updateReservationInDb(id, changes) {
+  if (!isSupabaseConfigured()) return null;
+
+  const response = await fetch(SUPABASE_URL + "/rest/v1/" + SUPABASE_TABLE + "?id=eq." + encodeURIComponent(id), {
+    method: "PATCH",
+    headers: supabaseHeaders({ Prefer: "return=representation" }),
+    body: JSON.stringify(changes),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error("No se pudo actualizar la reserva: " + text);
+  }
+
+  const rows = await response.json();
+  return rows[0] ? toAppReservation(rows[0]) : null;
+}
+
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -298,6 +405,15 @@ function createResponsiveStyles(isMobile) {
 }
 
 function runBasicTests() {
+  console.assert(isSupabaseConfigured() === false, "Supabase should be marked as not configured while placeholders are present");
+  console.assert(
+    toAppReservation({ id: "R1", confirmation_code: "C1", dock_index: 2, date: "2026-01-01", time: "09:00" }).confirmationCode === "C1",
+    "toAppReservation should map database fields to app fields"
+  );
+  console.assert(
+    toDbReservation({ id: "R1", confirmationCode: "C1", dockIndex: 2 }).confirmation_code === "C1",
+    "toDbReservation should map app fields to database fields"
+  );
   console.assert(timeToMinutes("08:30") === 510, "timeToMinutes should convert 08:30 to 510 minutes");
   console.assert(addMinutes("08:00", 30) === "08:30", "addMinutes should add 30 minutes correctly");
   console.assert(
@@ -348,7 +464,8 @@ export default function App() {
   const [transporterEmail, setTransporterEmail] = useState("");
   const [emailInput, setEmailInput] = useState("");
   const [config, setConfig] = useState(initialConfig);
-  const [reservations, setReservations] = useState(initialReservations);
+  const [reservations, setReservations] = useState([]);
+  const [dbStatus, setDbStatus] = useState({ loading: false, error: "", lastSync: "" });
   const [selectedDate, setSelectedDate] = useState(todayIso());
   const [selectedSlot, setSelectedSlot] = useState("");
   const [adminDate, setAdminDate] = useState(todayIso());
@@ -357,6 +474,29 @@ export default function App() {
   const [message, setMessage] = useState(null);
   const [loginMessage, setLoginMessage] = useState(null);
   const [form, setForm] = useState({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
+
+  async function loadReservations() {
+    if (!isSupabaseConfigured()) {
+      setReservations(initialReservations);
+      setDbStatus({ loading: false, error: "Supabase no configurado. Usando datos demo locales.", lastSync: "" });
+      return;
+    }
+
+    setDbStatus((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const dbReservations = await fetchReservationsFromDb();
+      setReservations(dbReservations);
+      setDbStatus({ loading: false, error: "", lastSync: new Date().toLocaleTimeString() });
+    } catch (error) {
+      setDbStatus({ loading: false, error: error.message, lastSync: "" });
+    }
+  }
+
+  useEffect(() => {
+    loadReservations();
+    const intervalId = window.setInterval(loadReservations, 15000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const slots = useMemo(() => buildSlots(config), [config]);
   const maxDocks = useMemo(() => getMaxDocks(config), [config]);
@@ -441,7 +581,7 @@ export default function App() {
     setActiveTab("reservar");
   }
 
-  function createReservation() {
+  async function createReservation() {
     if (!transporterEmail) {
       setMessage({ type: "error", text: "Primero accede con tu correo electronico." });
       return;
@@ -480,17 +620,29 @@ export default function App() {
       dockIndex: assignedDockIndex,
     };
 
-    setReservations((current) => current.concat(newReservation));
-    setMessage({ type: "success", text: "Reserva confirmada: " + newReservation.id + ". Codigo: " + confirmationCode + ". En esta demo el envio por email queda simulado." });
-    setSelectedSlot("");
-    setForm({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
+    try {
+      const savedReservation = await insertReservationInDb(newReservation);
+      setReservations((current) => current.concat(savedReservation));
+      setMessage({ type: "success", text: "Reserva confirmada: " + savedReservation.id + ". Codigo: " + savedReservation.confirmationCode + "." });
+      setSelectedSlot("");
+      setForm({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
+      await loadReservations();
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    }
   }
 
-  function cancelReservation(id) {
-    setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
+  async function cancelReservation(id) {
+    try {
+      await updateReservationInDb(id, { status: "Cancelada" });
+      setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
+      await loadReservations();
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    }
   }
 
-  function cancelTransporterReservation(id) {
+  async function cancelTransporterReservation(id) {
     const targetReservation = reservations.find((reservation) => reservation.id === id);
     if (!targetReservation) return;
     if (normalizeEmail(targetReservation.email) !== normalizeEmail(transporterEmail)) {
@@ -501,11 +653,17 @@ export default function App() {
       setMessage({ type: "error", text: "Esta reserva ya estaba cancelada." });
       return;
     }
-    setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
-    setMessage({ type: "success", text: "Reserva " + id + " cancelada correctamente." });
+    try {
+      await updateReservationInDb(id, { status: "Cancelada" });
+      setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, status: "Cancelada" } : reservation)));
+      setMessage({ type: "success", text: "Reserva " + id + " cancelada correctamente." });
+      await loadReservations();
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    }
   }
 
-  function moveReservationToDock(id, dockIndex) {
+  async function moveReservationToDock(id, dockIndex) {
     const targetReservation = reservations.find((reservation) => reservation.id === id);
     if (!targetReservation) return;
     const slot = getSlotByTime(slots, targetReservation.time);
@@ -520,8 +678,14 @@ export default function App() {
       setMessage({ type: "error", text: "Ese muelle ya esta ocupado en el mismo slot. Elige otro muelle." });
       return;
     }
-    setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, dockIndex: targetDockIndex } : reservation)));
-    setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle " + dockName(targetDockIndex) + "." });
+    try {
+      await updateReservationInDb(id, { dock_index: targetDockIndex });
+      setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, dockIndex: targetDockIndex } : reservation)));
+      setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle " + dockName(targetDockIndex) + "." });
+      await loadReservations();
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    }
   }
 
   function exportCsv() {
@@ -637,6 +801,9 @@ export default function App() {
         <div style={rs.configSummary}>
           <strong>Configuracion actual</strong>
           <span>{config.timeRanges.length} franjas - hasta {maxDocks} muelles - {dayStart}-{dayEnd}</span>
+          <span style={{ display: "block", marginTop: 8, color: dbStatus.error ? "#92400e" : "#166534", fontSize: 13 }}>
+            {dbStatus.loading ? "Sincronizando reservas..." : dbStatus.error ? dbStatus.error : "Reservas sincronizadas" + (dbStatus.lastSync ? " a las " + dbStatus.lastSync : "")}
+          </span>
         </div>
       </header>
 
@@ -762,6 +929,7 @@ export default function App() {
               <label style={{ ...rs.label, marginTop: 0 }}>Fecha<input style={rs.input} type="date" value={adminDate} onChange={(event) => setAdminDate(event.target.value)} /></label>
               <button style={adminView === "diaria" ? rs.primaryButton : rs.secondaryButton} onClick={() => setAdminView("diaria")}>Vista diaria</button>
               <button style={adminView === "semanal" ? rs.primaryButton : rs.secondaryButton} onClick={() => setAdminView("semanal")}>Vista semanal</button>
+              <button style={rs.secondaryButton} onClick={loadReservations}>Refrescar</button>
               <button style={rs.secondaryButton} onClick={exportCsv}>Exportar CSV</button>
             </div>
           </div>
