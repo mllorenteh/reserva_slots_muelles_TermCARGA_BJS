@@ -343,7 +343,7 @@ function buildGanttTooltip(reservation) {
     "Matricula: " + (reservation.plate || "-"),
     "Operacion: " + (reservation.operation || "-"),
     "Muelle: " + dockName(Number(reservation.dockIndex || 0)),
-  ].join("\n");
+  ].join(String.fromCharCode(10));
 }
 
 function upsertReservationInList(reservations, reservationToSave) {
@@ -354,6 +354,13 @@ function upsertReservationInList(reservations, reservationToSave) {
 
 function setReservationStatusInList(reservations, id, status) {
   return reservations.map((reservation) => (reservation.id === id ? { ...reservation, status } : reservation));
+}
+
+function setReservationDockInList(reservations, id, dockIndex) {
+  const numericDockIndex = Number(dockIndex);
+  return reservations.map((reservation) =>
+    reservation.id === id ? { ...reservation, dockIndex: numericDockIndex } : reservation
+  );
 }
 
 function canUseLocalStorage() {
@@ -421,7 +428,7 @@ const baseStyles = {
   homeShell: { display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(280px, 0.9fr)", gap: 22, alignItems: "stretch" },
   homePrimaryCard: { position: "relative", overflow: "hidden", background: "linear-gradient(135deg, #172033 0%, #26364f 52%, #0f766e 100%)", color: "white", borderRadius: 30, padding: 38, minHeight: 360, boxShadow: "0 22px 50px rgba(15, 23, 42, 0.22)", display: "grid", alignContent: "space-between", gap: 24 },
   homePrimaryOverlay: { position: "absolute", right: -90, top: -90, width: 260, height: 260, borderRadius: 999, background: "rgba(255,255,255,0.10)" },
-  homeTitle: { margin: 0, fontSize: 42, lineHeight: 1.05, letterSpacing: -0.8, maxWidth: 720 },
+  homeTitle: { margin: 0, fontSize: 42, lineHeight: 1.05, letterSpacing: -0.8, maxWidth: 720, color: "#ffffff" },
   homeLead: { margin: "16px 0 0", color: "rgba(255,255,255,0.82)", fontSize: 18, lineHeight: 1.6, maxWidth: 720 },
   homeActions: { display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" },
   homePrimaryButton: { border: 0, borderRadius: 16, padding: "16px 22px", fontWeight: 800, cursor: "pointer", background: "white", color: "#172033", fontSize: 17, boxShadow: "0 14px 30px rgba(0,0,0,0.16)" },
@@ -483,7 +490,7 @@ function createResponsiveStyles(isMobile) {
     ganttRow: { ...baseStyles.ganttRow, minWidth: 760, gridTemplateColumns: "80px 1fr" },
     homeShell: { ...baseStyles.homeShell, gridTemplateColumns: "1fr", gap: 14 },
     homePrimaryCard: { ...baseStyles.homePrimaryCard, padding: 22, minHeight: "auto", borderRadius: 22, gap: 20 },
-    homeTitle: { ...baseStyles.homeTitle, fontSize: 30, lineHeight: 1.12 },
+    homeTitle: { ...baseStyles.homeTitle, fontSize: 30, lineHeight: 1.12, color: "#ffffff" },
     homeLead: { ...baseStyles.homeLead, fontSize: 16 },
     homeActions: { ...baseStyles.homeActions, display: "grid", gridTemplateColumns: "1fr", width: "100%" },
     homePrimaryButton: { ...baseStyles.homePrimaryButton, width: "100%", minHeight: 52 },
@@ -523,6 +530,8 @@ function runBasicTests() {
   console.assert(upsertReservationInList([{ id: "R1", status: "Confirmada" }], { id: "R1", status: "Cancelada" })[0].status === "Cancelada", "upsertReservationInList should replace an existing reservation");
   console.assert(upsertReservationInList([{ id: "R1" }], { id: "R2" }).length === 2, "upsertReservationInList should add a new reservation");
   console.assert(setReservationStatusInList([{ id: "R1", status: "Confirmada" }], "R1", "Cancelada")[0].status === "Cancelada", "setReservationStatusInList should update reservation status");
+  console.assert(setReservationDockInList([{ id: "R1", dockIndex: 0 }], "R1", 2)[0].dockIndex === 2, "setReservationDockInList should update dock index");
+  console.assert(setReservationDockInList([{ id: "R1", dockIndex: 0 }], "R1", "3")[0].dockIndex === 3, "setReservationDockInList should convert dock index strings to numbers");
   console.assert(getMondayOfWeek("2026-01-01") === "2025-12-29", "getMondayOfWeek should return the Monday of the selected week");
   console.assert(getWeekDays("2026-01-01").length === 7, "getWeekDays should return 7 days");
   console.assert(countActiveReservationsForDate([{ date: "2026-01-01", status: "Confirmada" }, { date: "2026-01-01", status: "Cancelada" }], "2026-01-01") === 1, "countActiveReservationsForDate should count only active reservations");
@@ -810,23 +819,43 @@ export default function App() {
   async function moveReservationToDock(id, dockIndex) {
     const targetReservation = reservations.find((reservation) => reservation.id === id);
     if (!targetReservation) return;
+
     const slot = getSlotByTime(slots, targetReservation.time);
     const capacity = slot ? Number(slot.docks || 1) : maxDocks;
     const targetDockIndex = Number(dockIndex);
+
+    if (!Number.isInteger(targetDockIndex) || targetDockIndex < 0) {
+      setMessage({ type: "error", text: "Muelle seleccionado no valido." });
+      return;
+    }
 
     if (targetDockIndex >= capacity) {
       setMessage({ type: "error", text: "Ese muelle no esta abierto para la franja de esta reserva." });
       return;
     }
+
     if (!isDockAvailable(reservations, id, targetReservation.date, targetReservation.time, targetDockIndex)) {
       setMessage({ type: "error", text: "Ese muelle ya esta ocupado en el mismo slot. Elige otro muelle." });
       return;
     }
+
     try {
-      await updateReservationInDb(id, { dock_index: targetDockIndex });
-      setReservations((current) => current.map((reservation) => (reservation.id === id ? { ...reservation, dockIndex: targetDockIndex } : reservation)));
+      const updatedReservation = await updateReservationInDb(id, { dock_index: targetDockIndex });
+      const nextReservations = updatedReservation
+        ? upsertReservationInList(reservations, updatedReservation)
+        : setReservationDockInList(reservations, id, targetDockIndex);
+
+      setReservations(nextReservations);
+
+      if (!isSupabaseConfigured()) {
+        saveLocalReservations(nextReservations);
+      }
+
       setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle " + dockName(targetDockIndex) + "." });
-      await loadReservations();
+
+      if (isSupabaseConfigured()) {
+        await loadReservations();
+      }
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     }
