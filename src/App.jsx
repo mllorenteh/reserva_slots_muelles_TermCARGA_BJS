@@ -17,6 +17,13 @@ const SUPABASE_URL = "https://ppdmzpejjlwwqxurqvgq.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_apQrgWIC1ZgbeUJI6vQ6pQ_OCzakgvQ";
 const SUPABASE_TABLE = "reservations";
 
+const ADMIN_USERNAME = "admin";
+const ADMIN_PASSWORD = "admin123";
+
+function isValidAdminLogin(username, password) {
+  return String(username || "").trim() === ADMIN_USERNAME && String(password || "") === ADMIN_PASSWORD;
+}
+
 function isSupabaseConfigured() {
   return SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.length > 30;
 }
@@ -406,26 +413,16 @@ function createResponsiveStyles(isMobile) {
 
 function runBasicTests() {
   console.assert(isSupabaseConfigured() === false, "Supabase should be marked as not configured while placeholders are present");
-  console.assert(
-    toAppReservation({ id: "R1", confirmation_code: "C1", dock_index: 2, date: "2026-01-01", time: "09:00" }).confirmationCode === "C1",
-    "toAppReservation should map database fields to app fields"
-  );
-  console.assert(
-    toDbReservation({ id: "R1", confirmationCode: "C1", dockIndex: 2 }).confirmation_code === "C1",
-    "toDbReservation should map app fields to database fields"
-  );
+  console.assert(isValidAdminLogin("admin", "admin123") === true, "isValidAdminLogin should accept valid admin credentials");
+  console.assert(isValidAdminLogin("admin", "wrong") === false, "isValidAdminLogin should reject invalid admin credentials");
+  console.assert(toAppReservation({ id: "R1", confirmation_code: "C1", dock_index: 2, date: "2026-01-01", time: "09:00" }).confirmationCode === "C1", "toAppReservation should map database fields to app fields");
+  console.assert(toDbReservation({ id: "R1", confirmationCode: "C1", dockIndex: 2 }).confirmation_code === "C1", "toDbReservation should map app fields to database fields");
   console.assert(timeToMinutes("08:30") === 510, "timeToMinutes should convert 08:30 to 510 minutes");
   console.assert(addMinutes("08:00", 30) === "08:30", "addMinutes should add 30 minutes correctly");
-  console.assert(
-    JSON.stringify(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }).map((slot) => slot.time)) === JSON.stringify(["08:00", "08:30"]),
-    "buildSlots should generate slots up to, but not including, endTime"
-  );
+  console.assert(JSON.stringify(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }).map((slot) => slot.time)) === JSON.stringify(["08:00", "08:30"]), "buildSlots should generate slots up to, but not including, endTime");
   console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "20:00", endTime: "08:00", slotMinutes: 30, docks: 2 }] }).length === 0, "buildSlots should return an empty array when endTime is before startTime");
   console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 0, docks: 2 }] }).length === 0, "buildSlots should return an empty array when slotMinutes is zero");
-  console.assert(
-    buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }, { id: "T2", startTime: "09:00", endTime: "10:00", slotMinutes: 60, docks: 1 }] }).length === 3,
-    "buildSlots should support several ranges with different durations"
-  );
+  console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }, { id: "T2", startTime: "09:00", endTime: "10:00", slotMinutes: 60, docks: 1 }] }).length === 3, "buildSlots should support several ranges with different durations");
   console.assert(getMaxDocks({ timeRanges: [{ docks: 2 }, { docks: 5 }] }) === 5, "getMaxDocks should return the highest number of docks");
   console.assert(dockName(0) === "A" && dockName(3) === "D", "dockName should name docks A, B, C, D");
   console.assert(escapeCsv('A "test"') === '"A ""test"""', "escapeCsv should escape quotes correctly");
@@ -459,7 +456,7 @@ const initialReservations = [
 export default function App() {
   const isMobile = useIsMobile();
   const rs = useMemo(() => createResponsiveStyles(isMobile), [isMobile]);
-  const [appMode, setAppMode] = useState("transportista");
+  const [appMode, setAppMode] = useState("home");
   const [activeTab, setActiveTab] = useState("reservar");
   const [transporterEmail, setTransporterEmail] = useState("");
   const [emailInput, setEmailInput] = useState("");
@@ -474,6 +471,9 @@ export default function App() {
   const [message, setMessage] = useState(null);
   const [loginMessage, setLoginMessage] = useState(null);
   const [form, setForm] = useState({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
+  const [adminLoggedIn, setAdminLoggedIn] = useState(false);
+  const [adminLogin, setAdminLogin] = useState({ username: "", password: "" });
+  const [adminLoginMessage, setAdminLoginMessage] = useState(null);
 
   async function loadReservations() {
     if (!isSupabaseConfigured()) {
@@ -579,6 +579,7 @@ export default function App() {
     setEmailInput("");
     setMessage(null);
     setActiveTab("reservar");
+    setAppMode("home");
   }
 
   async function createReservation() {
@@ -726,20 +727,48 @@ export default function App() {
     return activeTab === tabName ? { ...rs.tab, ...rs.activeTab } : rs.tab;
   }
 
-  function modeButtonStyle(modeName) {
-    return appMode === modeName ? rs.primaryButton : rs.secondaryButton;
-  }
-
   function openTransporterMode() {
     setAppMode("transportista");
     setActiveTab("reservar");
     setMessage(null);
   }
 
+  function goHome() {
+    setAppMode("home");
+    setActiveTab("reservar");
+    setMessage(null);
+    setLoginMessage(null);
+    setAdminLoginMessage(null);
+  }
+
   function openAdminMode() {
     setAppMode("admin");
-    setActiveTab("admin");
+    setActiveTab(adminLoggedIn ? "admin" : "adminLogin");
     setMessage(null);
+  }
+
+  function updateAdminLogin(field, value) {
+    setAdminLogin((current) => ({ ...current, [field]: value }));
+  }
+
+  function loginAdmin() {
+    if (!isValidAdminLogin(adminLogin.username, adminLogin.password)) {
+      setAdminLoginMessage({ type: "error", text: "Usuario o contrasena de administrador incorrectos." });
+      return;
+    }
+
+    setAdminLoggedIn(true);
+    setAdminLogin({ username: "", password: "" });
+    setAdminLoginMessage(null);
+    setActiveTab("admin");
+  }
+
+  function logoutAdmin() {
+    setAdminLoggedIn(false);
+    setAdminLogin({ username: "", password: "" });
+    setAdminLoginMessage(null);
+    setActiveTab("adminLogin");
+    setAppMode("home");
   }
 
   function renderGantt() {
@@ -807,24 +836,59 @@ export default function App() {
         </div>
       </header>
 
-      <div style={rs.modeBar}>
-        <button style={modeButtonStyle("transportista")} onClick={openTransporterMode}>Vista transportista</button>
-        <button style={modeButtonStyle("admin")} onClick={openAdminMode}>Vista administrador</button>
-      </div>
+      {appMode === "home" && (
+        <section style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr", gap: 18, alignItems: "stretch" }}>
+          <div style={{ ...rs.card, padding: isMobile ? 20 : 32 }}>
+            <p style={rs.eyebrow}>Acceso principal</p>
+            <h2 style={{ margin: 0, fontSize: isMobile ? 26 : 34 }}>Soy transportista</h2>
+            <p style={{ ...rs.muted, fontSize: 18, lineHeight: 1.5 }}>Entra con tu correo electronico, consulta disponibilidad y reserva tu slot de carga o descarga.</p>
+            <button style={{ ...rs.primaryButton, marginTop: 10, fontSize: 18, padding: "16px 20px" }} onClick={openTransporterMode}>Entrar como transportista</button>
+          </div>
 
-      {appMode === "transportista" && (
+          <div style={{ ...rs.card, padding: isMobile ? 16 : 18, opacity: 0.95 }}>
+            <p style={rs.eyebrow}>Acceso interno</p>
+            <h3 style={{ margin: 0 }}>Administrador</h3>
+            <p style={rs.muted}>Panel interno para gestionar reservas, Gantt y configuracion.</p>
+            <button style={rs.secondaryButton} onClick={openAdminMode}>Login administrador</button>
+          </div>
+        </section>
+      )}
+
+      {appMode !== "home" && (
+        <div style={rs.modeBar}>
+          <button style={rs.secondaryButton} onClick={goHome}>Volver al inicio</button>
+        </div>
+      )}
+
+      {appMode === "transportista" && transporterEmail && (
         <nav style={rs.tabs}>
           <button style={tabStyle("reservar")} onClick={() => setActiveTab("reservar")}>Reservar slot</button>
           <button style={tabStyle("perfil")} onClick={() => setActiveTab("perfil")}>Mi perfil / reservas</button>
         </nav>
       )}
 
-      {appMode === "admin" && (
+      {appMode === "admin" && adminLoggedIn && (
         <nav style={rs.tabs}>
           <button style={tabStyle("admin")} onClick={() => setActiveTab("admin")}>Panel interno</button>
           <button style={tabStyle("gantt")} onClick={() => setActiveTab("gantt")}>Gantt muelles</button>
           <button style={tabStyle("config")} onClick={() => setActiveTab("config")}>Configuracion</button>
+          <button style={rs.secondaryButton} onClick={logoutAdmin}>Cerrar sesion admin</button>
         </nav>
+      )}
+
+      {appMode === "admin" && !adminLoggedIn && (
+        <section style={{ ...rs.card, maxWidth: 520, margin: "0 auto", padding: isMobile ? 16 : 20 }}>
+          <p style={rs.eyebrow}>Acceso interno</p>
+          <h2 style={{ margin: 0, fontSize: 24 }}>Administrador</h2>
+          <p style={rs.muted}>Introduce usuario y contrasena para acceder al panel interno.</p>
+          {adminLoginMessage && <div style={adminLoginMessage.type === "success" ? rs.success : rs.error}>{adminLoginMessage.text}</div>}
+          <div style={{ display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
+            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 200 }}>Usuario<input style={rs.input} value={adminLogin.username} onChange={(event) => updateAdminLogin("username", event.target.value)} placeholder="Usuario admin" /></label>
+            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 200 }}>Contrasena<input style={rs.input} type="password" value={adminLogin.password} onChange={(event) => updateAdminLogin("password", event.target.value)} placeholder="Contrasena" onKeyDown={(event) => { if (event.key === "Enter") loginAdmin(); }} /></label>
+            <button style={rs.primaryButton} onClick={loginAdmin}>Entrar</button>
+          </div>
+          <div style={rs.warning}>Este login es una proteccion simple en frontend. Para produccion conviene usar autenticacion real con Supabase Auth y politicas de seguridad por rol.</div>
+        </section>
       )}
 
       {appMode === "transportista" && !transporterEmail && (
@@ -845,7 +909,7 @@ export default function App() {
           <div style={rs.card}>
             <h2 style={{ margin: 0 }}>Datos de identificacion</h2>
             <p style={rs.muted}>Sesion iniciada como <strong>{transporterEmail}</strong>.</p>
-            <button style={rs.secondaryButton} onClick={logoutTransporter}>Cambiar correo</button>
+            <button style={rs.secondaryButton} onClick={logoutTransporter}>Salir / cambiar correo</button>
             <p style={rs.muted}>Introduce los datos minimos para reservar un hueco. Solo puedes tener una reserva activa por dia.</p>
             <label style={rs.label}>Matricula tractora *<input style={rs.input} value={form.plate} onChange={(event) => updateForm("plate", event.target.value)} placeholder="Ej. 1234ABC" /></label>
             <label style={rs.label}>AWB / Referencia *<input style={rs.input} value={form.awb} onChange={(event) => updateForm("awb", event.target.value)} placeholder="Ej. 075-12345678" /></label>
@@ -918,7 +982,7 @@ export default function App() {
         </section>
       )}
 
-      {appMode === "admin" && activeTab === "admin" && (
+      {appMode === "admin" && adminLoggedIn && activeTab === "admin" && (
         <section style={rs.card}>
           <div style={rs.sectionHeader}>
             <div>
@@ -987,7 +1051,7 @@ export default function App() {
         </section>
       )}
 
-      {appMode === "admin" && activeTab === "gantt" && (
+      {appMode === "admin" && adminLoggedIn && activeTab === "gantt" && (
         <section style={rs.card}>
           <div style={rs.sectionHeader}>
             <div>
@@ -1024,7 +1088,7 @@ export default function App() {
         </section>
       )}
 
-      {appMode === "admin" && activeTab === "config" && (
+      {appMode === "admin" && adminLoggedIn && activeTab === "config" && (
         <section style={rs.card}>
           <div style={rs.sectionHeader}>
             <div>
