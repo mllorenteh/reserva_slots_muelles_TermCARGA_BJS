@@ -263,6 +263,12 @@ function addDays(isoDate, days) {
   return dateToIso(date);
 }
 
+function addMonths(isoDate, months) {
+  const date = new Date(isoDate + "T00:00:00");
+  date.setMonth(date.getMonth() + months);
+  return dateToIso(date);
+}
+
 function getMondayOfWeek(isoDate) {
   const date = new Date(isoDate + "T00:00:00");
   const day = date.getDay();
@@ -274,6 +280,31 @@ function getMondayOfWeek(isoDate) {
 function getWeekDays(isoDate) {
   const monday = getMondayOfWeek(isoDate);
   return Array.from({ length: 7 }).map((_, index) => addDays(monday, index));
+}
+
+function getMonthDaysGrid(isoDate) {
+  const base = new Date(isoDate + "T00:00:00");
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const startOffset = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
+  const days = [];
+
+  for (let i = 0; i < startOffset; i += 1) days.push(null);
+  for (let day = 1; day <= lastDay.getDate(); day += 1) days.push(dateToIso(new Date(year, month, day)));
+  while (days.length % 7 !== 0) days.push(null);
+
+  return days;
+}
+
+function getMonthTitle(isoDate) {
+  const date = new Date(isoDate + "T00:00:00");
+  return date.toLocaleDateString("es-ES", { month: "long", year: "numeric" });
+}
+
+function isPastDate(isoDate) {
+  return isoDate < todayIso();
 }
 
 function countActiveReservationsForDate(reservations, date) {
@@ -309,10 +340,10 @@ function getOccupancyLevel(used, capacity, thresholds) {
 function getOccupancyBadgeStyle(used, capacity, thresholds) {
   const level = getOccupancyLevel(used, capacity, thresholds);
   const styles = {
-    green: { background: "#dcfce7", color: "#166534" },
-    yellow: { background: "#fef9c3", color: "#854d0e" },
-    orange: { background: "#fed7aa", color: "#9a3412" },
-    red: { background: "#fee2e2", color: "#991b1b" },
+    green: { background: "#dcfce7", color: "#166534", borderColor: "#22c55e" },
+    yellow: { background: "#fef9c3", color: "#854d0e", borderColor: "#eab308" },
+    orange: { background: "#fed7aa", color: "#9a3412", borderColor: "#f97316" },
+    red: { background: "#fee2e2", color: "#991b1b", borderColor: "#ef4444" },
   };
   return styles[level] || styles.green;
 }
@@ -413,9 +444,6 @@ const baseStyles = {
   error: { borderRadius: 14, padding: 14, marginBottom: 16, fontWeight: 700, background: "#fee2e2", color: "#991b1b" },
   stats: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 20 },
   stat: { background: "#f1f5f9", borderRadius: 18, padding: 18 },
-  table: { border: "1px solid #e2e8f0", borderRadius: 18, overflow: "hidden" },
-  tableHeader: { display: "grid", gridTemplateColumns: "90px 140px 1fr", gap: 12, padding: 14, background: "#f1f5f9", fontWeight: 700, color: "#475569" },
-  tableRow: { display: "grid", gridTemplateColumns: "90px 140px 1fr", gap: 12, padding: 14, borderTop: "1px solid #e2e8f0", alignItems: "start" },
   badge: { display: "inline-block", width: "fit-content", background: "#e2e8f0", borderRadius: 999, padding: "5px 10px", fontWeight: 700, color: "#334155" },
   dangerBadge: { background: "#fee2e2", color: "#991b1b" },
   reservationItem: { background: "#f8fafc", borderRadius: 16, padding: 12, display: "flex", justifyContent: "space-between", gap: 14, marginBottom: 10, flexWrap: "wrap" },
@@ -480,8 +508,6 @@ function createResponsiveStyles(isMobile) {
     secondaryButton: { ...baseStyles.secondaryButton, width: "100%", minHeight: 44 },
     dangerButton: { ...baseStyles.dangerButton, width: "100%", minHeight: 44 },
     stats: { ...baseStyles.stats, gridTemplateColumns: "1fr", gap: 10 },
-    tableHeader: { ...baseStyles.tableHeader, gridTemplateColumns: "1fr", gap: 6 },
-    tableRow: { ...baseStyles.tableRow, gridTemplateColumns: "1fr", gap: 8 },
     reservationItem: { ...baseStyles.reservationItem, display: "grid", gridTemplateColumns: "1fr", gap: 10 },
     configGrid: { ...baseStyles.configGrid, gridTemplateColumns: "1fr", gap: 10 },
     rangeCard: { ...baseStyles.rangeCard, padding: 14, borderRadius: 16 },
@@ -501,55 +527,6 @@ function createResponsiveStyles(isMobile) {
   };
 }
 
-function runBasicTests() {
-  console.assert(isSupabaseConfigured() === false, "Supabase should be marked as not configured while placeholders are present");
-  console.assert(isValidAdminLogin("admin", "admin123") === true, "isValidAdminLogin should accept valid admin credentials");
-  console.assert(isValidAdminLogin("admin", "wrong") === false, "isValidAdminLogin should reject invalid admin credentials");
-  console.assert(toAppReservation({ id: "R1", confirmation_code: "C1", dock_index: 2, date: "2026-01-01", time: "09:00" }).confirmationCode === "C1", "toAppReservation should map database fields to app fields");
-  console.assert(toDbReservation({ id: "R1", confirmationCode: "C1", dockIndex: 2 }).confirmation_code === "C1", "toDbReservation should map app fields to database fields");
-  console.assert(timeToMinutes("08:30") === 510, "timeToMinutes should convert 08:30 to 510 minutes");
-  console.assert(addMinutes("08:00", 30) === "08:30", "addMinutes should add 30 minutes correctly");
-  console.assert(JSON.stringify(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }).map((slot) => slot.time)) === JSON.stringify(["08:00", "08:30"]), "buildSlots should generate slots up to, but not including, endTime");
-  console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "20:00", endTime: "08:00", slotMinutes: 30, docks: 2 }] }).length === 0, "buildSlots should return an empty array when endTime is before startTime");
-  console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 0, docks: 2 }] }).length === 0, "buildSlots should return an empty array when slotMinutes is zero");
-  console.assert(buildSlots({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }, { id: "T2", startTime: "09:00", endTime: "10:00", slotMinutes: 60, docks: 1 }] }).length === 3, "buildSlots should support several ranges with different durations");
-  console.assert(getMaxDocks({ timeRanges: [{ docks: 2 }, { docks: 5 }] }) === 5, "getMaxDocks should return the highest number of docks");
-  console.assert(dockName(0) === "A" && dockName(3) === "D", "dockName should name docks A, B, C, D");
-  console.assert(escapeCsv('A "test"') === '"A ""test"""', "escapeCsv should escape quotes correctly");
-  console.assert(isDockAvailable([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "R2", "2026-01-01", "09:00", 0) === false, "isDockAvailable should detect an occupied dock in the same slot");
-  console.assert(findFirstAvailableDock([{ id: "R1", date: "2026-01-01", time: "09:00", dockIndex: 0, status: "Confirmada" }], "2026-01-01", "09:00", 2) === 1, "findFirstAvailableDock should return the first free dock");
-  console.assert(isValidEmail("transportista@demo.com") === true, "isValidEmail should accept valid emails");
-  console.assert(isValidEmail("transportista-demo") === false, "isValidEmail should reject invalid emails");
-  console.assert(hasReservationForEmailOnDate([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "A@B.COM", "2026-01-01") === true, "hasReservationForEmailOnDate should detect one active reservation per email and day");
-  console.assert(shouldBlockSlotSelection([{ email: "a@b.com", date: "2026-01-01", status: "Confirmada" }], "a@b.com", "2026-01-01") === true, "shouldBlockSlotSelection should block slot selection when an active reservation exists for the day");
-  console.assert(getReservationsForEmail([{ email: "A@B.COM", date: "2026-01-01", time: "09:00" }], "a@b.com").length === 1, "getReservationsForEmail should return reservations for the logged email");
-  console.assert(Math.round(getGanttBarWidthPercent(30, 720)) === 4, "getGanttBarWidthPercent should use the real slot duration over the visible day");
-  console.assert(getGanttBarWidthPercent(45, 45) === 100, "getGanttBarWidthPercent should fill the available space when duration equals total");
-  console.assert(buildGanttTooltip({ id: "R1", time: "09:00", endTime: "09:30", company: "Empresa", awb: "AWB1", plate: "1234ABC", operation: "Carga", dockIndex: 0 }).includes("Empresa: Empresa"), "buildGanttTooltip should include company details");
-  console.assert(buildGanttTooltip({ id: "R1", time: "09:00", endTime: "09:30", company: "Empresa", awb: "AWB1", plate: "1234ABC", operation: "Carga", dockIndex: 0 }).includes("AWB: AWB1"), "buildGanttTooltip should include AWB details");
-  console.assert(upsertReservationInList([{ id: "R1", status: "Confirmada" }], { id: "R1", status: "Cancelada" })[0].status === "Cancelada", "upsertReservationInList should replace an existing reservation");
-  console.assert(upsertReservationInList([{ id: "R1" }], { id: "R2" }).length === 2, "upsertReservationInList should add a new reservation");
-  console.assert(setReservationStatusInList([{ id: "R1", status: "Confirmada" }], "R1", "Cancelada")[0].status === "Cancelada", "setReservationStatusInList should update reservation status");
-  console.assert(setReservationDockInList([{ id: "R1", dockIndex: 0 }], "R1", 2)[0].dockIndex === 2, "setReservationDockInList should update dock index");
-  console.assert(setReservationDockInList([{ id: "R1", dockIndex: 0 }], "R1", "3")[0].dockIndex === 3, "setReservationDockInList should convert dock index strings to numbers");
-  console.assert(getMondayOfWeek("2026-01-01") === "2025-12-29", "getMondayOfWeek should return the Monday of the selected week");
-  console.assert(getWeekDays("2026-01-01").length === 7, "getWeekDays should return 7 days");
-  console.assert(countActiveReservationsForDate([{ date: "2026-01-01", status: "Confirmada" }, { date: "2026-01-01", status: "Cancelada" }], "2026-01-01") === 1, "countActiveReservationsForDate should count only active reservations");
-  console.assert(getDailyCapacity({ timeRanges: [{ id: "T1", startTime: "08:00", endTime: "09:00", slotMinutes: 30, docks: 2 }] }) === 4, "getDailyCapacity should calculate total slot capacity for the day");
-  console.assert(getOccupancyPercent(5, 10) === 50, "getOccupancyPercent should calculate percentage correctly");
-  console.assert(getOccupancyLevel(4, 10, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "green", "getOccupancyLevel should be green below 50 percent");
-  console.assert(getOccupancyLevel(5, 10, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "yellow", "getOccupancyLevel should be yellow from 50 percent");
-  console.assert(getOccupancyLevel(91, 100, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "orange", "getOccupancyLevel should be orange above 90 percent");
-  console.assert(getOccupancyLevel(10, 10, { greenMax: 50, yellowMax: 90, orangeMax: 99 }) === "red", "getOccupancyLevel should be red at 100 percent");
-  console.assert(createResponsiveStyles(false).gridTwo.gridTemplateColumns !== "1fr", "desktop styles should keep two-column booking layout");
-  console.assert(createResponsiveStyles(true).gridTwo.gridTemplateColumns === "1fr", "mobile styles should use one-column booking layout");
-  console.assert(createResponsiveStyles(true).primaryButton.width === "100%", "mobile buttons should be full width");
-  console.assert(createResponsiveStyles(false).homeShell.gridTemplateColumns.includes("2fr"), "desktop home should prioritize transporter card");
-  console.assert(createResponsiveStyles(true).homeShell.gridTemplateColumns === "1fr", "mobile home should stack cards cleanly");
-}
-
-runBasicTests();
-
 const initialReservations = [
   { id: "RSV-1001", email: "demo.transportista@correo.com", confirmationCode: "CNF-100001", date: todayIso(), time: "09:00", plate: "1234ABC", awb: "075-12345678", company: "Transporte Demo", contact: "Carlos Martin", phone: "+34 600 000 001", operation: "Descarga", status: "Confirmada", createdAt: new Date().toLocaleString(), dockIndex: 0 },
   { id: "RSV-1002", email: "otro.transportista@correo.com", confirmationCode: "CNF-100002", date: todayIso(), time: "09:00", plate: "9876XYZ", awb: "075-87654321", company: "Logistica Norte", contact: "Ana Perez", phone: "+34 600 000 002", operation: "Carga", status: "Confirmada", createdAt: new Date().toLocaleString(), dockIndex: 1 },
@@ -559,6 +536,7 @@ const initialReservations = [
 export default function App() {
   const isMobile = useIsMobile();
   const rs = useMemo(() => createResponsiveStyles(isMobile), [isMobile]);
+
   const [appMode, setAppMode] = useState("home");
   const [activeTab, setActiveTab] = useState("reservar");
   const [transporterEmail, setTransporterEmail] = useState("");
@@ -570,7 +548,9 @@ export default function App() {
   const [selectedSlot, setSelectedSlot] = useState("");
   const [adminDate, setAdminDate] = useState(todayIso());
   const [adminView, setAdminView] = useState("diaria");
+  const [selectedAdminSlot, setSelectedAdminSlot] = useState("");
   const [ganttDate, setGanttDate] = useState(todayIso());
+  const [profileMonth, setProfileMonth] = useState(todayIso());
   const [message, setMessage] = useState(null);
   const messageRef = useRef(null);
   const bookingLimitRef = useRef(null);
@@ -634,6 +614,10 @@ export default function App() {
     }, 80);
   }
 
+  function getReservationsForSlot(date, time) {
+    return reservations.filter((reservation) => reservation.date === date && reservation.time === time && reservation.status !== "Cancelada");
+  }
+
   function selectTransporterSlot(slotTime) {
     if (shouldBlockSlotSelection(reservations, transporterEmail, selectedDate)) {
       setMessage(null);
@@ -645,10 +629,6 @@ export default function App() {
 
     setBookingLimitWarning(false);
     setSelectedSlot(slotTime);
-  }
-
-  function getReservationsForSlot(date, time) {
-    return reservations.filter((reservation) => reservation.date === date && reservation.time === time && reservation.status !== "Cancelada");
   }
 
   function getDockIndexForReservation(date, time, reservationId) {
@@ -670,7 +650,12 @@ export default function App() {
   const adminRows = useMemo(() => {
     return slots.map((slot) => {
       const slotReservations = getReservationsForSlot(adminDate, slot.time);
-      return { ...slot, used: slotReservations.length, available: Math.max(Number(slot.docks || 1) - slotReservations.length, 0), reservations: slotReservations };
+      return {
+        ...slot,
+        used: slotReservations.length,
+        available: Math.max(Number(slot.docks || 1) - slotReservations.length, 0),
+        reservations: slotReservations,
+      };
     });
   }, [slots, adminDate, reservations]);
 
@@ -687,6 +672,17 @@ export default function App() {
   }, [reservations, ganttDate, slots, maxDocks]);
 
   const transporterReservations = useMemo(() => getReservationsForEmail(reservations, transporterEmail), [reservations, transporterEmail]);
+  const profileMonthDays = useMemo(() => getMonthDaysGrid(profileMonth), [profileMonth]);
+
+  const transporterReservationsByDay = useMemo(() => {
+    const grouped = {};
+    transporterReservations.forEach((reservation) => {
+      if (!grouped[reservation.date]) grouped[reservation.date] = [];
+      grouped[reservation.date].push(reservation);
+    });
+    return grouped;
+  }, [transporterReservations]);
+
   const alreadyBookedSelectedDate = hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate);
   const canSubmit = Boolean(transporterEmail && !alreadyBookedSelectedDate && form.plate.trim() && form.awb.trim() && form.company.trim() && form.phone.trim() && selectedDate && selectedSlot);
 
@@ -725,6 +721,7 @@ export default function App() {
       scrollToMessage();
       return;
     }
+
     if (hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate)) {
       setMessage(null);
       setBookingLimitWarning(true);
@@ -745,6 +742,7 @@ export default function App() {
 
     const assignedDockIndex = findFirstAvailableDock(reservations, selectedDate, selectedSlot, capacity);
     const confirmationCode = generateConfirmationCode();
+
     const newReservation = {
       id: "RSV-" + Math.floor(100000 + Math.random() * 900000),
       email: transporterEmail,
@@ -768,12 +766,18 @@ export default function App() {
       const nextReservations = upsertReservationInList(reservations, savedReservation);
       setReservations(nextReservations);
       if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
-      setMessage({ type: "success", text: "Reserva confirmada: " + savedReservation.id + ". Codigo: " + savedReservation.confirmationCode + ". Puedes verla y cancelarla desde Mi perfil / reservas." });
+
+      setMessage({
+        type: "success",
+        text: "Reserva confirmada: " + savedReservation.id + ". Codigo: " + savedReservation.confirmationCode + ". Puedes verla y cancelarla desde Mi perfil / reservas.",
+      });
+
       setBookingLimitWarning(false);
       setActiveTab("perfil");
       scrollToMessage();
       setSelectedSlot("");
       setForm({ plate: "", awb: "", company: "", contact: "", phone: "", operation: "Descarga", notes: "" });
+
       if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
@@ -796,14 +800,17 @@ export default function App() {
   async function cancelTransporterReservation(id) {
     const targetReservation = reservations.find((reservation) => reservation.id === id);
     if (!targetReservation) return;
+
     if (normalizeEmail(targetReservation.email) !== normalizeEmail(transporterEmail)) {
       setMessage({ type: "error", text: "No puedes cancelar una reserva asociada a otro correo." });
       return;
     }
+
     if (targetReservation.status === "Cancelada") {
       setMessage({ type: "error", text: "Esta reserva ya estaba cancelada." });
       return;
     }
+
     try {
       await updateReservationInDb(id, { status: "Cancelada" });
       const nextReservations = setReservationStatusInList(reservations, id, "Cancelada");
@@ -846,16 +853,11 @@ export default function App() {
         : setReservationDockInList(reservations, id, targetDockIndex);
 
       setReservations(nextReservations);
-
-      if (!isSupabaseConfigured()) {
-        saveLocalReservations(nextReservations);
-      }
+      if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
 
       setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle " + dockName(targetDockIndex) + "." });
 
-      if (isSupabaseConfigured()) {
-        await loadReservations();
-      }
+      if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     }
@@ -864,7 +866,27 @@ export default function App() {
   function exportCsv() {
     const rows = reservations.filter((reservation) => reservation.date === adminDate);
     const headers = ["ID", "Codigo", "Email", "Fecha", "Hora", "Estado", "Operacion", "Matricula", "AWB", "Empresa", "Contacto", "Telefono", "Creada"];
-    const csvRows = [headers.join(";")].concat(rows.map((reservation) => [reservation.id, reservation.confirmationCode, reservation.email, reservation.date, reservation.time, reservation.status, reservation.operation, reservation.plate, reservation.awb, reservation.company, reservation.contact, reservation.phone, reservation.createdAt].map(escapeCsv).join(";")));
+    const csvRows = [headers.join(";")].concat(
+      rows.map((reservation) =>
+        [
+          reservation.id,
+          reservation.confirmationCode,
+          reservation.email,
+          reservation.date,
+          reservation.time,
+          reservation.status,
+          reservation.operation,
+          reservation.plate,
+          reservation.awb,
+          reservation.company,
+          reservation.contact,
+          reservation.phone,
+          reservation.createdAt,
+        ]
+          .map(escapeCsv)
+          .join(";")
+      )
+    );
     const newLine = String.fromCharCode(10);
     const blob = new Blob([csvRows.join(newLine)], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -876,16 +898,27 @@ export default function App() {
   }
 
   function updateRange(id, field, value) {
-    setConfig((current) => ({ ...current, timeRanges: current.timeRanges.map((range) => (range.id === id ? { ...range, [field]: field === "slotMinutes" || field === "docks" ? Number(value) || 1 : value } : range)) }));
+    setConfig((current) => ({
+      ...current,
+      timeRanges: current.timeRanges.map((range) =>
+        range.id === id ? { ...range, [field]: field === "slotMinutes" || field === "docks" ? Number(value) || 1 : value } : range
+      ),
+    }));
   }
 
   function updateOccupancyThreshold(field, value) {
     const numericValue = Math.max(0, Math.min(100, Number(value) || 0));
-    setConfig((current) => ({ ...current, occupancyThresholds: { ...current.occupancyThresholds, [field]: numericValue } }));
+    setConfig((current) => ({
+      ...current,
+      occupancyThresholds: { ...current.occupancyThresholds, [field]: numericValue },
+    }));
   }
 
   function addRange() {
-    setConfig((current) => ({ ...current, timeRanges: current.timeRanges.concat({ id: "FR-" + Date.now(), startTime: "20:00", endTime: "22:00", slotMinutes: 30, docks: 2 }) }));
+    setConfig((current) => ({
+      ...current,
+      timeRanges: current.timeRanges.concat({ id: "FR-" + Date.now(), startTime: "20:00", endTime: "22:00", slotMinutes: 30, docks: 2 }),
+    }));
   }
 
   function removeRange(id) {
@@ -950,6 +983,7 @@ export default function App() {
     const totalMinutes = Math.max(endMinutes - startMinutes, 1);
     const hourMarks = [];
     let mark = Math.ceil(startMinutes / 60) * 60;
+
     while (mark <= endMinutes) {
       hourMarks.push(mark);
       mark += 60;
@@ -962,10 +996,15 @@ export default function App() {
           <div style={{ position: "relative", height: 46 }}>
             {hourMarks.map((minute) => {
               const left = ((minute - startMinutes) / totalMinutes) * 100;
-              return <div key={minute} style={{ position: "absolute", left: left + "%", top: 8, fontSize: 12, color: "#64748b" }}>{minutesToTime(minute)}</div>;
+              return (
+                <div key={minute} style={{ position: "absolute", left: left + "%", top: 8, fontSize: 12, color: "#64748b" }}>
+                  {minutesToTime(minute)}
+                </div>
+              );
             })}
           </div>
         </div>
+
         {Array.from({ length: maxDocks }).map((_, dockIndex) => (
           <div style={rs.ganttRow} key={dockIndex}>
             <div style={{ padding: 12, fontWeight: 800, background: "#f8fafc" }}>Muelle {dockName(dockIndex)}</div>
@@ -974,32 +1013,36 @@ export default function App() {
                 const left = ((minute - startMinutes) / totalMinutes) * 100;
                 return <div key={minute} style={{ position: "absolute", left: left + "%", top: 0, bottom: 0, borderLeft: "1px solid #e2e8f0" }} />;
               })}
-              {ganttReservations.filter((reservation) => reservation.dockIndex === dockIndex).map((reservation) => {
-                const left = ((timeToMinutes(reservation.time) - startMinutes) / totalMinutes) * 100;
-                const width = getGanttBarWidthPercent(reservation.duration, totalMinutes);
-                const tooltip = buildGanttTooltip(reservation);
-                return (
-                  <div
-                    key={reservation.id}
-                    title={tooltip}
-                    aria-label={tooltip}
-                    style={{
-                      position: "absolute",
-                      left: left + "%",
-                      top: 8,
-                      width: width + "%",
-                      minWidth: 0,
-                      height: 50,
-                      borderRadius: 10,
-                      background: reservation.operation === "Carga" ? "#dbeafe" : "#dcfce7",
-                      border: "1px solid #94a3b8",
-                      overflow: "hidden",
-                      boxSizing: "border-box",
-                      cursor: "help",
-                    }}
-                  />
-                );
-              })}
+
+              {ganttReservations
+                .filter((reservation) => reservation.dockIndex === dockIndex)
+                .map((reservation) => {
+                  const left = ((timeToMinutes(reservation.time) - startMinutes) / totalMinutes) * 100;
+                  const width = getGanttBarWidthPercent(reservation.duration, totalMinutes);
+                  const tooltip = buildGanttTooltip(reservation);
+
+                  return (
+                    <div
+                      key={reservation.id}
+                      title={tooltip}
+                      aria-label={tooltip}
+                      style={{
+                        position: "absolute",
+                        left: left + "%",
+                        top: 8,
+                        width: width + "%",
+                        minWidth: 0,
+                        height: 50,
+                        borderRadius: 10,
+                        background: reservation.operation === "Carga" ? "#dbeafe" : "#dcfce7",
+                        border: "1px solid #94a3b8",
+                        overflow: "hidden",
+                        boxSizing: "border-box",
+                        cursor: "help",
+                      }}
+                    />
+                  );
+                })}
             </div>
           </div>
         ))}
@@ -1012,17 +1055,35 @@ export default function App() {
       {appMode === "home" && (
         <section style={rs.homeShell}>
           <div style={rs.homePrimaryCard}>
+            <img
+              src="/logo_south_fondo_gris.png"
+              alt="South Europe Ground Services"
+              style={{
+                position: "absolute",
+                top: 18,
+                right: 18,
+                width: isMobile ? 110 : 170,
+                maxWidth: "32%",
+                borderRadius: 12,
+                background: "rgba(255,255,255,0.9)",
+                padding: 6,
+                zIndex: 2,
+              }}
+            />
             <div style={rs.homePrimaryOverlay} />
-            <div style={{ position: "relative" }}>
+
+            <div style={{ position: "relative", paddingRight: isMobile ? 0 : 190 }}>
               <span style={rs.homeGhostBadge}>✓ Acceso para transportistas</span>
               <h2 style={rs.homeTitle}>Reserva tu slot de carga o descarga sin esperas.</h2>
               <p style={rs.homeLead}>Consulta la ocupacion de los muelles en tiempo real, elige el horario que mejor encaje con tu ruta y recibe tu codigo de confirmacion.</p>
+
               <div style={rs.homeStepListDark}>
                 <div style={rs.homeStepItemDark}><span style={rs.dotLight} /><span>Identificate con tu correo electronico.</span></div>
                 <div style={rs.homeStepItemDark}><span style={rs.dotLight} /><span>Selecciona el dia y un slot disponible.</span></div>
                 <div style={rs.homeStepItemDark}><span style={rs.dotLight} /><span>Guarda tu codigo de confirmacion para la llegada.</span></div>
               </div>
             </div>
+
             <div style={{ ...rs.homeActions, position: "relative" }}>
               <button style={rs.homePrimaryButton} onClick={openTransporterMode}>Entrar como transportista</button>
               <span style={{ color: "rgba(255,255,255,0.72)", fontSize: 14 }}>Solo necesitas tu correo electronico.</span>
@@ -1067,12 +1128,32 @@ export default function App() {
           <p style={rs.eyebrow}>Acceso interno</p>
           <h2 style={{ margin: 0, fontSize: 24 }}>Administrador</h2>
           <p style={rs.muted}>Introduce usuario y contrasena para acceder al panel interno.</p>
+
           {adminLoginMessage && <div style={adminLoginMessage.type === "success" ? rs.success : rs.error}>{adminLoginMessage.text}</div>}
+
           <div style={{ display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
-            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 200 }}>Usuario<input style={rs.input} value={adminLogin.username} onChange={(event) => updateAdminLogin("username", event.target.value)} placeholder="Usuario admin" /></label>
-            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 200 }}>Contrasena<input style={rs.input} type="password" value={adminLogin.password} onChange={(event) => updateAdminLogin("password", event.target.value)} placeholder="Contrasena" onKeyDown={(event) => { if (event.key === "Enter") loginAdmin(); }} /></label>
+            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 200 }}>
+              Usuario
+              <input style={rs.input} value={adminLogin.username} onChange={(event) => updateAdminLogin("username", event.target.value)} placeholder="Usuario admin" />
+            </label>
+
+            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 200 }}>
+              Contrasena
+              <input
+                style={rs.input}
+                type="password"
+                value={adminLogin.password}
+                onChange={(event) => updateAdminLogin("password", event.target.value)}
+                placeholder="Contrasena"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") loginAdmin();
+                }}
+              />
+            </label>
+
             <button style={rs.primaryButton} onClick={loginAdmin}>Entrar</button>
           </div>
+
           <div style={rs.warning}>Este login es una proteccion simple en frontend. Para produccion conviene usar autenticacion real con Supabase Auth y politicas de seguridad por rol.</div>
         </section>
       )}
@@ -1081,11 +1162,17 @@ export default function App() {
         <section style={rs.card}>
           <h2 style={{ margin: 0 }}>Acceso transportista</h2>
           <p style={rs.muted}>Introduce tu correo electronico. No necesitas contrasena. Con este email podras ver tus reservas y recibir el codigo de confirmacion.</p>
+
           {loginMessage && <div style={loginMessage.type === "success" ? rs.success : rs.error}>{loginMessage.text}</div>}
+
           <div style={{ display: "flex", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
-            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 320 }}>Correo electronico<input style={rs.input} type="email" value={emailInput} onChange={(event) => setEmailInput(event.target.value)} placeholder="empresa@transportista.com" /></label>
+            <label style={{ ...rs.label, minWidth: isMobile ? "100%" : 320 }}>
+              Correo electronico
+              <input style={rs.input} type="email" value={emailInput} onChange={(event) => setEmailInput(event.target.value)} placeholder="empresa@transportista.com" />
+            </label>
             <button style={rs.primaryButton} onClick={loginTransporter}>Entrar</button>
           </div>
+
           <div style={rs.warning}>En esta version demo el acceso por email identifica al transportista, pero no envia todavia un email real ni valida identidad. Para produccion lo conectaremos a Supabase/Auth o a un servicio de email.</div>
         </section>
       )}
@@ -1097,6 +1184,7 @@ export default function App() {
             <p style={rs.muted}>Sesion iniciada como <strong>{transporterEmail}</strong>.</p>
             <button style={rs.secondaryButton} onClick={logoutTransporter}>Salir / cambiar correo</button>
             <p style={rs.muted}>Introduce los datos minimos para reservar un hueco. Solo puedes tener una reserva activa por dia.</p>
+
             <label style={rs.label}>Matricula tractora *<input style={rs.input} value={form.plate} onChange={(event) => updateForm("plate", event.target.value)} placeholder="Ej. 1234ABC" /></label>
             <label style={rs.label}>AWB / Referencia *<input style={rs.input} value={form.awb} onChange={(event) => updateForm("awb", event.target.value)} placeholder="Ej. 075-12345678" /></label>
             <label style={rs.label}>Empresa transportista *<input style={rs.input} value={form.company} onChange={(event) => updateForm("company", event.target.value)} placeholder="Nombre de la empresa" /></label>
@@ -1112,23 +1200,44 @@ export default function App() {
                 <p style={rs.muted}>Cada slot usa la duracion y capacidad de su franja horaria configurada.</p>
                 {bookingLimitWarning && <p ref={bookingLimitRef} style={{ ...rs.error, marginTop: 12 }}>No puedes reservar mas de un slot al dia. Si necesitas cambiar la cita, cancela primero tu reserva actual en Mi perfil / reservas.</p>}
               </div>
-              <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>Fecha<input style={rs.input} type="date" value={selectedDate} onChange={(event) => { setSelectedDate(event.target.value); setBookingLimitWarning(false); setSelectedSlot(""); }} /></label>
+
+              <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>
+                Fecha
+                <input
+                  style={rs.input}
+                  type="date"
+                  value={selectedDate}
+                  onChange={(event) => {
+                    setSelectedDate(event.target.value);
+                    setBookingLimitWarning(false);
+                    setSelectedSlot("");
+                  }}
+                />
+              </label>
             </div>
+
             {message && <div ref={messageRef} style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+
             <div style={rs.slotGrid}>
               {availability.map((slot) => {
                 const occupancyStyle = getOccupancyBadgeStyle(slot.used, slot.docks, config.occupancyThresholds);
-                const currentSlotStyle = selectedSlot === slot.time ? { ...rs.slot, ...rs.slotSelected } : slot.full ? { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.color, cursor: "not-allowed" } : { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.color };
+                const currentSlotStyle = selectedSlot === slot.time
+                  ? { ...rs.slot, ...rs.slotSelected }
+                  : slot.full
+                    ? { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.borderColor, cursor: "not-allowed" }
+                    : { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.borderColor };
+
                 const availableText = slot.full ? "Completo" : slot.available + " hueco" + (slot.available === 1 ? "" : "s") + " disponible" + (slot.available === 1 ? "" : "s");
+
                 return (
                   <button key={slot.rangeId + slot.time} disabled={slot.full} style={currentSlotStyle} onClick={() => selectTransporterSlot(slot.time)}>
                     <strong style={{ display: "block", fontSize: 20 }}>{slot.time}</strong>
                     <span style={{ display: "block", marginTop: 8 }}>{availableText}</span>
-                    <small style={{ display: "block", marginTop: 8 }}>{slot.slotMinutes} min - {slot.used}/{slot.docks} muelles</small>
                   </button>
                 );
               })}
             </div>
+
             <div style={rs.confirmBox}>
               <div>
                 <strong>Slot seleccionado: {selectedSlot || "ninguno"}</strong>
@@ -1144,28 +1253,83 @@ export default function App() {
         <section style={rs.card}>
           <div style={rs.sectionHeader}>
             <div>
-              <h2 style={{ margin: 0 }}>Mi perfil y mis reservas</h2>
+              <h2 style={{ margin: 0 }}>Mi calendario de reservas</h2>
               <p style={rs.muted}>Correo de acceso: <strong>{transporterEmail}</strong></p>
             </div>
-            <button style={rs.secondaryButton} onClick={logoutTransporter}>Salir / cambiar correo</button>
-          </div>
-          {message && <div ref={messageRef} style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
-          {transporterReservations.length === 0 && <p style={rs.muted}>Todavia no tienes reservas asociadas a este correo.</p>}
-          {transporterReservations.length > 0 && <p style={rs.muted}>Aqui puedes consultar tus reservas y cancelar una cita activa si necesitas cambiar de horario.</p>}
-          {transporterReservations.map((reservation) => (
-            <div style={rs.reservationItem} key={reservation.id}>
-              <div>
-                <strong>{reservation.date} - {reservation.time} - {reservation.operation}</strong>
-                <p style={{ margin: "5px 0 0", color: "#64748b" }}>Codigo confirmacion: <strong>{reservation.confirmationCode}</strong> - Reserva {reservation.id}</p>
-                <p style={{ margin: "5px 0 0", color: "#64748b" }}>Matricula {reservation.plate} - AWB {reservation.awb} - Empresa {reservation.company}</p>
-              </div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={reservation.status === "Cancelada" ? { ...rs.badge, ...rs.dangerBadge } : rs.badge}>{reservation.status}</span>
-                {reservation.status !== "Cancelada" && <button style={rs.dangerButton} onClick={() => cancelTransporterReservation(reservation.id)}>Cancelar cita</button>}
-              </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button style={rs.secondaryButton} onClick={() => setProfileMonth(addMonths(profileMonth, -1))}>Mes anterior</button>
+              <button style={rs.secondaryButton} onClick={() => setProfileMonth(todayIso())}>Mes actual</button>
+              <button style={rs.secondaryButton} onClick={() => setProfileMonth(addMonths(profileMonth, 1))}>Mes siguiente</button>
+              <button style={rs.secondaryButton} onClick={logoutTransporter}>Salir / cambiar correo</button>
             </div>
-          ))}
-          <div style={rs.warning}>El envio del codigo al correo esta simulado en esta demo. Para envio real necesitamos conectar un backend o servicio de email.</div>
+          </div>
+
+          {message && <div ref={messageRef} style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+
+          <h3 style={{ marginTop: 0, textTransform: "capitalize" }}>{getMonthTitle(profileMonth)}</h3>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginBottom: 8, color: "#64748b", fontWeight: 800, textAlign: "center" }}>
+            {["L", "M", "X", "J", "V", "S", "D"].map((day) => <div key={day}>{day}</div>)}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 8 }}>
+            {profileMonthDays.map((date, index) => {
+              const dayReservations = date ? transporterReservationsByDay[date] || [] : [];
+              const past = date ? isPastDate(date) : false;
+
+              return (
+                <div
+                  key={date || "empty-" + index}
+                  style={{
+                    minHeight: isMobile ? 88 : 110,
+                    borderRadius: 14,
+                    padding: 10,
+                    background: !date ? "transparent" : past ? "#e5e7eb" : "#f8fafc",
+                    border: date ? "1px solid #e2e8f0" : "1px solid transparent",
+                    color: past ? "#6b7280" : "#172033",
+                    opacity: !date ? 0 : 1,
+                    fontSize: isMobile ? 12 : 14,
+                  }}
+                >
+                  {date && (
+                    <>
+                      <strong>{Number(date.slice(-2))}</strong>
+                      {dayReservations.map((reservation) => {
+                        const expired = isPastDate(reservation.date);
+                        const shownStatus = expired && reservation.status !== "Cancelada" ? "Expirada" : reservation.status;
+
+                        return (
+                          <div
+                            key={reservation.id}
+                            style={{
+                              marginTop: 8,
+                              padding: 8,
+                              borderRadius: 10,
+                              background: expired ? "#d1d5db" : reservation.status === "Cancelada" ? "#fee2e2" : "#dcfce7",
+                              color: expired ? "#374151" : reservation.status === "Cancelada" ? "#991b1b" : "#166534",
+                              fontSize: 12,
+                            }}
+                          >
+                            <strong>{reservation.time}</strong>
+                            <div>{shownStatus}</div>
+                            <div>AWB {reservation.awb}</div>
+                            {reservation.status !== "Cancelada" && !expired && (
+                              <button style={{ ...rs.dangerButton, marginTop: 6, padding: "7px 9px", fontSize: 12 }} onClick={() => cancelTransporterReservation(reservation.id)}>
+                                Cancelar
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={rs.warning}>Los dias pasados aparecen en gris. Las reservas de dias anteriores se muestran como expiradas.</div>
         </section>
       )}
 
@@ -1176,8 +1340,20 @@ export default function App() {
               <h2 style={{ margin: 0 }}>Panel interno de reservas</h2>
               <p style={rs.muted}>Vista operativa por franja, ocupacion y detalle de transportistas.</p>
             </div>
+
             <div style={{ display: "flex", alignItems: "end", gap: 12, flexWrap: "wrap", width: isMobile ? "100%" : "auto" }}>
-              <label style={{ ...rs.label, marginTop: 0 }}>Fecha<input style={rs.input} type="date" value={adminDate} onChange={(event) => setAdminDate(event.target.value)} /></label>
+              <label style={{ ...rs.label, marginTop: 0 }}>
+                Fecha
+                <input
+                  style={rs.input}
+                  type="date"
+                  value={adminDate}
+                  onChange={(event) => {
+                    setAdminDate(event.target.value);
+                    setSelectedAdminSlot("");
+                  }}
+                />
+              </label>
               <button style={adminView === "diaria" ? rs.primaryButton : rs.secondaryButton} onClick={() => setAdminView("diaria")}>Vista diaria</button>
               <button style={adminView === "semanal" ? rs.primaryButton : rs.secondaryButton} onClick={() => setAdminView("semanal")}>Vista semanal</button>
               <button style={rs.secondaryButton} onClick={loadReservations}>Refrescar</button>
@@ -1192,10 +1368,14 @@ export default function App() {
                 <div style={rs.stat}><span>Semana desde</span><strong style={{ display: "block", marginTop: 8, fontSize: 24 }}>{weekDays[0]}</strong></div>
                 <div style={rs.stat}><span>Semana hasta</span><strong style={{ display: "block", marginTop: 8, fontSize: 24 }}>{weekDays[6]}</strong></div>
               </div>
-              <div style={rs.table}>
-                <div style={{ ...rs.tableHeader, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr" }}><span>Dia</span><span>Fecha</span><span>Reservas / slots</span></div>
+
+              <div style={{ border: "1px solid #e2e8f0", borderRadius: 18, overflow: "hidden" }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, padding: 14, background: "#f1f5f9", fontWeight: 700, color: "#475569" }}>
+                  <span>Dia</span><span>Fecha</span><span>Reservas / slots</span>
+                </div>
+
                 {weeklyReservations.map((day) => (
-                  <div style={{ ...rs.tableRow, gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr" }} key={day.date}>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12, padding: 14, borderTop: "1px solid #e2e8f0" }} key={day.date}>
                     <strong>{day.dayName}</strong>
                     <span>{day.date}</span>
                     <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(day.count, day.capacity, config.occupancyThresholds) }}>{day.count}/{day.capacity}</span>
@@ -1205,36 +1385,63 @@ export default function App() {
             </div>
           )}
 
-          <div style={adminView === "diaria" ? rs.stats : { display: "none" }}>
-            <div style={rs.stat}><span>Reservas activas</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{activeReservations.length}</strong></div>
-            <div style={rs.stat}><span>Capacidad diaria</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{dailyCapacity}</strong></div>
-            <div style={rs.stat}><span>Maximo muelles</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{maxDocks}</strong></div>
-          </div>
+          {adminView === "diaria" && (
+            <div style={{ display: "grid", gap: 18 }}>
+              <div style={rs.stats}>
+                <div style={rs.stat}><span>Reservas activas</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{activeReservations.length}</strong></div>
+                <div style={rs.stat}><span>Capacidad diaria</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{dailyCapacity}</strong></div>
+                <div style={rs.stat}><span>Maximo muelles</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{maxDocks}</strong></div>
+              </div>
 
-          <div style={adminView === "diaria" ? rs.table : { display: "none" }}>
-            <div style={rs.tableHeader}><span>Hora</span><span>Ocupacion</span><span>Reservas</span></div>
-            {adminRows.map((row) => (
-              <div style={rs.tableRow} key={row.rangeId + row.time}>
-                <strong>{row.time}</strong>
-                <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(row.used, row.docks, config.occupancyThresholds) }}>{row.used}/{row.docks} - {row.slotMinutes} min</span>
-                <div>
-                  {row.reservations.length === 0 && <span style={{ color: "#94a3b8" }}>Sin reservas</span>}
-                  {row.reservations.map((reservation) => (
+              <div style={rs.slotGrid}>
+                {adminRows.map((row) => {
+                  const occupancyStyle = getOccupancyBadgeStyle(row.used, row.docks, config.occupancyThresholds);
+                  const isSelected = selectedAdminSlot === row.time;
+
+                  return (
+                    <button
+                      key={row.rangeId + row.time}
+                      style={{
+                        ...rs.slot,
+                        ...occupancyStyle,
+                        borderColor: occupancyStyle.borderColor,
+                        outline: isSelected ? "3px solid #172033" : "none",
+                      }}
+                      onClick={() => setSelectedAdminSlot(isSelected ? "" : row.time)}
+                    >
+                      <strong style={{ display: "block", fontSize: 20 }}>{row.time}</strong>
+                      <span style={{ display: "block", marginTop: 8 }}>{row.used}/{row.docks} muelles ocupados</span>
+                      <small style={{ display: "block", marginTop: 8 }}>{row.slotMinutes} min</small>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {selectedAdminSlot && (
+                <div style={rs.rangeCard}>
+                  <h3 style={{ marginTop: 0 }}>Detalle del slot {selectedAdminSlot}</h3>
+
+                  {getReservationsForSlot(adminDate, selectedAdminSlot).length === 0 && <p style={rs.muted}>No hay reservas en este slot.</p>}
+
+                  {getReservationsForSlot(adminDate, selectedAdminSlot).map((reservation) => (
                     <div style={rs.reservationItem} key={reservation.id}>
                       <div>
-                        <strong>{reservation.id} - {reservation.confirmationCode} - {reservation.operation} - {reservation.plate}</strong>
-                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Email {reservation.email} - AWB {reservation.awb} - {reservation.company} - {reservation.phone}</p>
+                        <strong>{reservation.company} - {reservation.plate}</strong>
+                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Reserva {reservation.id} - AWB {reservation.awb}</p>
+                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Transportista: {reservation.email}</p>
+                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Muelle asignado en Gantt: <strong>Muelle {dockName(Number(reservation.dockIndex || 0))}</strong></p>
                       </div>
+
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        <span style={rs.badge}>{reservation.status}</span>
+                        <span style={reservation.status === "Cancelada" ? { ...rs.badge, ...rs.dangerBadge } : rs.badge}>{reservation.status}</span>
                         {reservation.status !== "Cancelada" && <button style={rs.secondaryButton} onClick={() => cancelReservation(reservation.id)}>Cancelar</button>}
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            ))}
-          </div>
+              )}
+            </div>
+          )}
         </section>
       )}
 
@@ -1245,22 +1452,30 @@ export default function App() {
               <h2 style={{ margin: 0 }}>Gantt de ocupacion por muelle</h2>
               <p style={rs.muted}>Vista de ocupacion por muelle. Puedes reasignar manualmente reservas entre Muelle A, B, C, D...</p>
             </div>
-            <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>Fecha<input style={rs.input} type="date" value={ganttDate} onChange={(event) => setGanttDate(event.target.value)} /></label>
+            <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>
+              Fecha
+              <input style={rs.input} type="date" value={ganttDate} onChange={(event) => setGanttDate(event.target.value)} />
+            </label>
           </div>
+
           {renderGantt()}
+
           <div style={{ marginTop: 20 }}>
             <h3 style={{ margin: "0 0 12px" }}>Asignacion manual de muelles</h3>
             {message && <div style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
             {ganttReservations.length === 0 && <p style={rs.muted}>No hay reservas activas para esta fecha.</p>}
+
             {ganttReservations.map((reservation) => {
               const slot = getSlotByTime(slots, reservation.time);
               const capacity = slot ? Number(slot.docks || 1) : maxDocks;
+
               return (
                 <div style={rs.reservationItem} key={reservation.id}>
                   <div>
                     <strong>{reservation.id} - {reservation.time}-{reservation.endTime} - {reservation.plate}</strong>
                     <p style={{ margin: "5px 0 0", color: "#64748b" }}>AWB {reservation.awb} - {reservation.company} - muelle actual {dockName(reservation.dockIndex)}</p>
                   </div>
+
                   <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 160 }}>
                     Mover a muelle
                     <select style={rs.input} value={reservation.dockIndex} onChange={(event) => moveReservationToDock(reservation.id, event.target.value)}>
@@ -1271,6 +1486,7 @@ export default function App() {
               );
             })}
           </div>
+
           <div style={rs.warning}>Si el muelle elegido ya esta ocupado en el mismo slot, la app bloquea el cambio para evitar solapes.</div>
         </section>
       )}
@@ -1288,11 +1504,13 @@ export default function App() {
           <div style={rs.rangeCard}>
             <h3 style={{ margin: "0 0 8px" }}>Rangos de color de ocupacion</h3>
             <p style={rs.muted}>Configura los umbrales que pintan los indicadores de ocupacion. Por defecto: verde por debajo del 50%, amarillo entre 50% y 90%, naranja por encima del 90%, rojo al 100%.</p>
+
             <div style={rs.configGrid}>
               <label style={rs.label}>Verde hasta menor que (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.greenMax} onChange={(event) => updateOccupancyThreshold("greenMax", event.target.value)} /></label>
               <label style={rs.label}>Amarillo hasta (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.yellowMax} onChange={(event) => updateOccupancyThreshold("yellowMax", event.target.value)} /></label>
               <label style={rs.label}>Naranja hasta (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.orangeMax} onChange={(event) => updateOccupancyThreshold("orangeMax", event.target.value)} /></label>
             </div>
+
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
               <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(20, 100, config.occupancyThresholds) }}>20%</span>
               <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(60, 100, config.occupancyThresholds) }}>60%</span>
@@ -1307,12 +1525,14 @@ export default function App() {
                 <strong>Franja {index + 1}</strong>
                 <button style={config.timeRanges.length <= 1 ? { ...rs.dangerButton, ...rs.disabledButton } : rs.dangerButton} disabled={config.timeRanges.length <= 1} onClick={() => removeRange(range.id)}>Eliminar</button>
               </div>
+
               <div style={rs.configGrid}>
                 <label style={rs.label}>Hora inicio<input style={rs.input} type="time" value={range.startTime} onChange={(event) => updateRange(range.id, "startTime", event.target.value)} /></label>
                 <label style={rs.label}>Hora fin<input style={rs.input} type="time" value={range.endTime} onChange={(event) => updateRange(range.id, "endTime", event.target.value)} /></label>
                 <label style={rs.label}>Duracion slot<select style={rs.input} value={range.slotMinutes} onChange={(event) => updateRange(range.id, "slotMinutes", event.target.value)}><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option><option value="90">90 minutos</option></select></label>
                 <label style={rs.label}>Muelles abiertos<input style={rs.input} type="number" min="1" value={range.docks} onChange={(event) => updateRange(range.id, "docks", event.target.value)} /></label>
               </div>
+
               <p style={{ ...rs.muted, marginBottom: 0 }}>Slots generados en esta franja: {buildSlotsForRange(range).length}</p>
             </div>
           ))}
