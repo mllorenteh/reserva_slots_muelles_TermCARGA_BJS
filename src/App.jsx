@@ -23,11 +23,12 @@ const initialConfig = {
 };
 
 /* PEGA AQUI TUS VALORES REALES DE SUPABASE */
-const SUPABASE_URL = "https://ppdmzpejjlwwqxurqvgq.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_apQrgWIC1ZgbeUJI6vQ6pQ_OCzakgvQ";;
+const SUPABASE_URL = "PEGA_AQUI_TU_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_SUPABASE_ANON_KEY";
 
 const SUPABASE_TABLE = "reservations";
 const LOCAL_RESERVATIONS_KEY = "slot-reservations-local";
+const PASSWORD_RECOVERY_PENDING_KEY = "slot-password-recovery-pending";
 
 const ADMIN_USERNAME = "admin";
 const ADMIN_PASSWORD = "admin123";
@@ -595,9 +596,19 @@ export default function App() {
 
     const urlParams = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.replace("#", ""));
-    const isRecoveryUrl = urlParams.get("recovery") === "1" || hashParams.get("type") === "recovery";
+    const hasAuthCode = urlParams.has("code") || hashParams.has("code") || hashParams.has("access_token");
+    const hasRecoveryMarker =
+      urlParams.get("recovery") === "1" ||
+      urlParams.get("type") === "recovery" ||
+      hashParams.get("recovery") === "1" ||
+      hashParams.get("type") === "recovery";
 
-    if (isRecoveryUrl) {
+    const hasPendingRecovery =
+      canUseLocalStorage() && window.localStorage.getItem(PASSWORD_RECOVERY_PENDING_KEY) === "1";
+
+    const isRecoveryUrl = hasRecoveryMarker || (hasPendingRecovery && hasAuthCode);
+
+    function showPasswordRecoveryScreen() {
       setAppMode("transportista");
       setAuthMode("updatePassword");
       setActiveTab("reservar");
@@ -607,31 +618,23 @@ export default function App() {
       });
     }
 
+    if (isRecoveryUrl) {
+      showPasswordRecoveryScreen();
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       if (data.session?.user?.email) {
         setTransporterSession(data.session);
         setTransporterEmail(normalizeEmail(data.session.user.email));
-        if (isRecoveryUrl) {
-          setAppMode("transportista");
-          setAuthMode("updatePassword");
-          setActiveTab("reservar");
-          setLoginMessage({
-            type: "success",
-            text: "Introduce tu nueva contrasena para completar el restablecimiento.",
-          });
+        if (isRecoveryUrl || hasPendingRecovery) {
+          showPasswordRecoveryScreen();
         }
       }
     });
 
     const { data: subscription } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "PASSWORD_RECOVERY") {
-        setAppMode("transportista");
-        setAuthMode("updatePassword");
-        setActiveTab("reservar");
-        setLoginMessage({
-          type: "success",
-          text: "Introduce tu nueva contrasena para completar el restablecimiento.",
-        });
+      if (event === "PASSWORD_RECOVERY" || (session?.user?.email && (isRecoveryUrl || hasPendingRecovery))) {
+        showPasswordRecoveryScreen();
       }
 
       if (session?.user?.email) {
@@ -758,8 +761,14 @@ export default function App() {
       return;
     }
 
+    if (canUseLocalStorage()) {
+      window.localStorage.setItem(PASSWORD_RECOVERY_PENDING_KEY, "1");
+    }
+
+    const recoveryRedirectUrl = window.location.origin + window.location.pathname + "?recovery=1";
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin + "?recovery=1",
+      redirectTo: recoveryRedirectUrl,
     });
 
     if (error) {
@@ -792,6 +801,10 @@ export default function App() {
       return;
     }
 
+    if (canUseLocalStorage()) {
+      window.localStorage.removeItem(PASSWORD_RECOVERY_PENDING_KEY);
+    }
+
     setLoginMessage({ type: "success", text: "Contrasena actualizada correctamente. Ya puedes continuar." });
     setAuthMode("login");
     setAuthForm({ email: "", password: "", repeatPassword: "", newPassword: "", repeatNewPassword: "" });
@@ -802,6 +815,9 @@ export default function App() {
 
   async function logoutTransporter() {
     if (supabase) await supabase.auth.signOut();
+    if (canUseLocalStorage()) {
+      window.localStorage.removeItem(PASSWORD_RECOVERY_PENDING_KEY);
+    }
     setTransporterSession(null);
     setTransporterEmail("");
     setAuthForm({ email: "", password: "", repeatPassword: "", newPassword: "", repeatNewPassword: "" });
