@@ -15,6 +15,32 @@ const initialConfig = {
     yellowMax: 90,
     orangeMax: 99,
   },
+  deliveryCounter: {
+    startTime: "08:00",
+    endTime: "20:00",
+    stepMinutes: 15,
+    counters: 1,
+    deliveryDocks: 4,
+    maxDeliveryReservationsPerDay: 3,
+  },
+  deliveryRules: [
+    { id: "DR-1", deliveryType: "General", subtype: "Sin aduana", awbQuantityRange: "Entre 1 y 3", counterMinutes: 10, deliveryDockMinutes: 15 },
+    { id: "DR-2", deliveryType: "General", subtype: "Sin aduana", awbQuantityRange: "Entre 4 - 7", counterMinutes: 20, deliveryDockMinutes: 15 },
+    { id: "DR-3", deliveryType: "General", subtype: "Sin aduana", awbQuantityRange: "Entre 8-10", counterMinutes: 40, deliveryDockMinutes: 15 },
+    { id: "DR-4", deliveryType: "General", subtype: "Sin aduana", awbQuantityRange: ">10", counterMinutes: 60, deliveryDockMinutes: 15 },
+    { id: "DR-5", deliveryType: "General", subtype: "G5", awbQuantityRange: "Entre 1 y 3", counterMinutes: 20, deliveryDockMinutes: 15 },
+    { id: "DR-6", deliveryType: "General", subtype: "G5", awbQuantityRange: "Entre 4 - 7", counterMinutes: 40, deliveryDockMinutes: 15 },
+    { id: "DR-7", deliveryType: "General", subtype: "G5", awbQuantityRange: ">8", counterMinutes: 60, deliveryDockMinutes: 15 },
+    { id: "DR-8", deliveryType: "General", subtype: "T1 (primero pesar al muelle +15 min)", awbQuantityRange: "Entre 1 y 3", counterMinutes: 20, deliveryDockMinutes: 15 },
+    { id: "DR-9", deliveryType: "General", subtype: "T1 (primero pesar al muelle +15 min)", awbQuantityRange: "Entre 4 - 7", counterMinutes: 40, deliveryDockMinutes: 15 },
+    { id: "DR-10", deliveryType: "General", subtype: "T1 (primero pesar al muelle +15 min)", awbQuantityRange: ">8", counterMinutes: 60, deliveryDockMinutes: 15 },
+    { id: "DR-11", deliveryType: "General", subtype: "Re etiquetados", awbQuantityRange: "Entre 1 y 3", counterMinutes: 20, deliveryDockMinutes: 15 },
+    { id: "DR-12", deliveryType: "General", subtype: "Re etiquetados", awbQuantityRange: "Entre 4 - 7", counterMinutes: 40, deliveryDockMinutes: 15 },
+    { id: "DR-13", deliveryType: "General", subtype: "Re etiquetados", awbQuantityRange: ">8", counterMinutes: 60, deliveryDockMinutes: 15 },
+    { id: "DR-14", deliveryType: "Restringidos 20 min", subtype: "N/A", awbQuantityRange: "N/A", counterMinutes: 20, deliveryDockMinutes: 15 },
+    { id: "DR-15", deliveryType: "Avis", subtype: "N/A", awbQuantityRange: "N/A", counterMinutes: 20, deliveryDockMinutes: 15 },
+  ],
+  // Compatibilidad con reservas antiguas. La nueva logica usa deliveryCounter y deliveryRules.
   timeRanges: [
     { id: "FR-1", startTime: "08:00", endTime: "12:00", slotMinutes: 30, docks: 4 },
     { id: "FR-2", startTime: "12:00", endTime: "16:00", slotMinutes: 45, docks: 3 },
@@ -60,7 +86,44 @@ function supabaseHeaders(extraHeaders = {}) {
   };
 }
 
+function parseReservationNotes(notes) {
+  if (!notes) return { parsed: false, notesText: "" };
+  try {
+    const parsed = JSON.parse(notes);
+    if (parsed && parsed.__deliverySlotMeta === true) {
+      return { parsed: true, ...parsed };
+    }
+  } catch (error) {
+    // Reserva antigua con notas en texto libre.
+  }
+  return { parsed: false, notesText: notes };
+}
+
+function buildReservationNotes(meta) {
+  return JSON.stringify({
+    __deliverySlotMeta: true,
+    notesText: meta.notesText || "",
+    deliveryType: meta.deliveryType || "",
+    deliverySubtype: meta.deliverySubtype || "",
+    awbQuantityRange: meta.awbQuantityRange || "",
+    counterDuration: Number(meta.counterDuration || 0),
+    deliveryDockDuration: Number(meta.deliveryDockDuration || 0),
+    counterStart: meta.counterStart || "",
+    counterEnd: meta.counterEnd || "",
+    counterBlockEnd: meta.counterBlockEnd || "",
+    deliveryDockStart: meta.deliveryDockStart || "",
+    deliveryDockEnd: meta.deliveryDockEnd || "",
+    counterIndex: Number(meta.counterIndex || 0),
+    deliveryDockIndex: Number(meta.deliveryDockIndex || 0),
+  });
+}
+
 function toAppReservation(row) {
+  const meta = parseReservationNotes(row.notes || "");
+  const deliveryDockIndex = Number.isFinite(Number(meta.deliveryDockIndex))
+    ? Number(meta.deliveryDockIndex)
+    : Number(row.dock_index || 0);
+
   return {
     id: row.id,
     email: row.email || "",
@@ -72,11 +135,24 @@ function toAppReservation(row) {
     company: row.company || "",
     contact: row.contact || "",
     phone: row.phone || "",
-    operation: row.operation || "Entrega de mercancía",
-    notes: row.notes || "",
+    operation: row.operation || meta.deliveryType || "Entrega de mercancía",
+    notes: meta.notesText || "",
+    rawNotes: row.notes || "",
     status: row.status || "Confirmada",
     createdAt: row.created_at || "",
-    dockIndex: Number(row.dock_index || 0),
+    dockIndex: deliveryDockIndex,
+    deliveryType: meta.deliveryType || "",
+    deliverySubtype: meta.deliverySubtype || "",
+    awbQuantityRange: meta.awbQuantityRange || "",
+    counterDuration: Number(meta.counterDuration || 0),
+    deliveryDockDuration: Number(meta.deliveryDockDuration || 0),
+    counterStart: meta.counterStart || row.time || "",
+    counterEnd: meta.counterEnd || "",
+    counterBlockEnd: meta.counterBlockEnd || "",
+    deliveryDockStart: meta.deliveryDockStart || "",
+    deliveryDockEnd: meta.deliveryDockEnd || "",
+    counterIndex: Number(meta.counterIndex || 0),
+    deliveryDockIndex,
   };
 }
 
@@ -192,6 +268,203 @@ function buildSlots(config) {
     .flatMap(buildSlotsForRange);
 }
 
+function getDeliveryCounterConfig(config) {
+  const counter = config.deliveryCounter || {};
+  return {
+    startTime: counter.startTime || "08:00",
+    endTime: counter.endTime || "20:00",
+    stepMinutes: Math.max(5, Number(counter.stepMinutes || 15)),
+    counters: Math.max(1, Number(counter.counters || 1)),
+    deliveryDocks: Math.max(1, Number(counter.deliveryDocks || 1)),
+    maxDeliveryReservationsPerDay: Math.max(1, Number(counter.maxDeliveryReservationsPerDay || 3)),
+  };
+}
+
+function buildCounterStartSlots(config, selectedRule) {
+  const counter = getDeliveryCounterConfig(config);
+  const duration = selectedRule ? Number(selectedRule.counterMinutes || 0) : counter.stepMinutes;
+  const slots = [];
+  let currentMinutes = timeToMinutes(counter.startTime);
+  const endMinutes = timeToMinutes(counter.endTime);
+
+  while (currentMinutes + duration <= endMinutes) {
+    slots.push({
+      time: minutesToTime(currentMinutes),
+      stepMinutes: counter.stepMinutes,
+      counterDuration: duration,
+      deliveryDockDuration: selectedRule ? Number(selectedRule.deliveryDockMinutes || 0) : 0,
+    });
+    currentMinutes += counter.stepMinutes;
+  }
+
+  return slots;
+}
+
+function roundUpMinutes(value, step) {
+  const safeStep = Math.max(1, Number(step || 15));
+  return Math.ceil(Number(value || 0) / safeStep) * safeStep;
+}
+
+function addMinutesToClock(time, minutesToAdd) {
+  return minutesToTime(timeToMinutes(time) + Number(minutesToAdd || 0));
+}
+
+function intervalsOverlap(startA, endA, startB, endB) {
+  return timeToMinutes(startA) < timeToMinutes(endB) && timeToMinutes(startB) < timeToMinutes(endA);
+}
+
+function isActiveDeliveryReservation(reservation) {
+  return reservation.status !== "Cancelada" && reservation.operation === "Entrega de mercancía";
+}
+
+function getRuleDeliveryTypes(config) {
+  return Array.from(new Set((config.deliveryRules || []).map((rule) => rule.deliveryType))).filter(Boolean);
+}
+
+function getRuleSubtypes(config, deliveryType) {
+  return Array.from(new Set((config.deliveryRules || []).filter((rule) => rule.deliveryType === deliveryType).map((rule) => rule.subtype))).filter(Boolean);
+}
+
+function getRuleAwbRanges(config, deliveryType, subtype) {
+  return Array.from(new Set((config.deliveryRules || []).filter((rule) => rule.deliveryType === deliveryType && rule.subtype === subtype).map((rule) => rule.awbQuantityRange))).filter(Boolean);
+}
+
+function findDeliveryRule(config, deliveryType, subtype, awbQuantityRange) {
+  return (config.deliveryRules || []).find(
+    (rule) =>
+      rule.deliveryType === deliveryType &&
+      rule.subtype === subtype &&
+      rule.awbQuantityRange === awbQuantityRange
+  ) || null;
+}
+
+function normalizeDeliverySelection(config, currentForm) {
+  const deliveryTypes = getRuleDeliveryTypes(config);
+  const deliveryType = deliveryTypes.includes(currentForm.deliveryType) ? currentForm.deliveryType : deliveryTypes[0] || "";
+  const subtypes = getRuleSubtypes(config, deliveryType);
+  const deliverySubtype = subtypes.includes(currentForm.deliverySubtype) ? currentForm.deliverySubtype : subtypes[0] || "";
+  const ranges = getRuleAwbRanges(config, deliveryType, deliverySubtype);
+  const awbQuantityRange = ranges.includes(currentForm.awbQuantityRange) ? currentForm.awbQuantityRange : ranges[0] || "";
+  return { deliveryType, deliverySubtype, awbQuantityRange };
+}
+
+function getCounterEndForReservation(reservation) {
+  if (reservation.counterEnd) return reservation.counterEnd;
+  const duration = Number(reservation.counterDuration || 0);
+  return duration ? addMinutesToClock(reservation.counterStart || reservation.time, duration) : reservation.time;
+}
+
+function getDeliveryDockEndForReservation(reservation) {
+  if (reservation.deliveryDockEnd) return reservation.deliveryDockEnd;
+  const duration = Number(reservation.deliveryDockDuration || 0);
+  return duration ? addMinutesToClock(reservation.deliveryDockStart || getCounterEndForReservation(reservation), duration) : "";
+}
+
+function findAvailableCounterIndex(reservations, date, startTime, endTime, counterCount) {
+  for (let index = 0; index < counterCount; index += 1) {
+    const occupied = reservations.some((reservation) => {
+      if (!isActiveDeliveryReservation(reservation) || reservation.date !== date) return false;
+      if (Number(reservation.counterIndex || 0) !== index) return false;
+      const reservationStart = reservation.counterStart || reservation.time;
+      const reservationEnd = getCounterEndForReservation(reservation);
+      return intervalsOverlap(startTime, endTime, reservationStart, reservationEnd);
+    });
+    if (!occupied) return index;
+  }
+  return -1;
+}
+
+function findAvailableDeliveryDockIndex(reservations, date, startTime, endTime, dockCount) {
+  for (let index = 0; index < dockCount; index += 1) {
+    const occupied = reservations.some((reservation) => {
+      if (!isActiveDeliveryReservation(reservation) || reservation.date !== date) return false;
+      const reservationDockIndex = Number(
+        Number.isFinite(Number(reservation.deliveryDockIndex)) ? reservation.deliveryDockIndex : reservation.dockIndex || 0
+      );
+      if (reservationDockIndex !== index) return false;
+      const reservationStart = reservation.deliveryDockStart || getCounterEndForReservation(reservation);
+      const reservationEnd = getDeliveryDockEndForReservation(reservation);
+      return intervalsOverlap(startTime, endTime, reservationStart, reservationEnd);
+    });
+    if (!occupied) return index;
+  }
+  return -1;
+}
+
+function countCounterOccupancy(reservations, date, startTime, endTime) {
+  return reservations.filter((reservation) => {
+    if (!isActiveDeliveryReservation(reservation) || reservation.date !== date) return false;
+    return intervalsOverlap(startTime, endTime, reservation.counterStart || reservation.time, getCounterEndForReservation(reservation));
+  }).length;
+}
+
+function countDeliveryDockOccupancy(reservations, date, startTime, endTime) {
+  return reservations.filter((reservation) => {
+    if (!isActiveDeliveryReservation(reservation) || reservation.date !== date) return false;
+    return intervalsOverlap(startTime, endTime, reservation.deliveryDockStart || getCounterEndForReservation(reservation), getDeliveryDockEndForReservation(reservation));
+  }).length;
+}
+
+function getDeliveryScheduleForStart(config, rule, startTime) {
+  if (!rule || !startTime) return null;
+  const counter = getDeliveryCounterConfig(config);
+  const counterDuration = Number(rule.counterMinutes || 0);
+  const deliveryDockDuration = Number(rule.deliveryDockMinutes || 0);
+  const counterStart = startTime;
+  const counterEnd = addMinutesToClock(counterStart, counterDuration);
+  const counterBlockEnd = addMinutesToClock(counterStart, roundUpMinutes(counterDuration, counter.stepMinutes));
+  const deliveryDockStart = counterEnd;
+  const deliveryDockEnd = addMinutesToClock(deliveryDockStart, deliveryDockDuration);
+
+  return {
+    counterStart,
+    counterEnd,
+    counterBlockEnd,
+    deliveryDockStart,
+    deliveryDockEnd,
+    counterDuration,
+    deliveryDockDuration,
+  };
+}
+
+function getDeliveryAvailabilityForStart(reservations, date, config, rule, startTime) {
+  const schedule = getDeliveryScheduleForStart(config, rule, startTime);
+  if (!schedule) return null;
+
+  const counter = getDeliveryCounterConfig(config);
+  const counterIndex = findAvailableCounterIndex(reservations, date, schedule.counterStart, schedule.counterEnd, counter.counters);
+  const deliveryDockIndex = findAvailableDeliveryDockIndex(reservations, date, schedule.deliveryDockStart, schedule.deliveryDockEnd, counter.deliveryDocks);
+  const counterUsed = countCounterOccupancy(reservations, date, schedule.counterStart, schedule.counterEnd);
+  const deliveryDockUsed = countDeliveryDockOccupancy(reservations, date, schedule.deliveryDockStart, schedule.deliveryDockEnd);
+
+  return {
+    ...schedule,
+    counterIndex,
+    deliveryDockIndex,
+    counterUsed,
+    deliveryDockUsed,
+    counterCapacity: counter.counters,
+    deliveryDockCapacity: counter.deliveryDocks,
+    available: counterIndex >= 0 && deliveryDockIndex >= 0,
+  };
+}
+
+function getReservationsOverlappingCounterWindow(reservations, date, startTime, minutes) {
+  const endTime = addMinutesToClock(startTime, minutes);
+  return reservations.filter((reservation) => {
+    if (!isActiveDeliveryReservation(reservation) || reservation.date !== date) return false;
+    return intervalsOverlap(startTime, endTime, reservation.counterStart || reservation.time, getCounterEndForReservation(reservation));
+  });
+}
+
+function getReservationsOverlappingDeliveryDockWindow(reservations, date, startTime, minutes) {
+  const endTime = addMinutesToClock(startTime, minutes);
+  return reservations.filter((reservation) => {
+    if (!isActiveDeliveryReservation(reservation) || reservation.date !== date) return false;
+    return intervalsOverlap(startTime, endTime, reservation.deliveryDockStart || getCounterEndForReservation(reservation), getDeliveryDockEndForReservation(reservation));
+  });
+}
+
 function getDayStart(config) {
   const ranges = config.timeRanges || [];
   if (!ranges.length) return "08:00";
@@ -262,14 +535,24 @@ function generateConfirmationCode() {
   return "CNF-" + Math.floor(100000 + Math.random() * 900000);
 }
 
-function hasReservationForEmailOnDate(reservations, email, date) {
+function countReservationsForEmailOnDate(reservations, email, date, operation = "") {
   const cleanEmail = normalizeEmail(email);
-  return reservations.some(
+  return reservations.filter(
     (reservation) =>
       normalizeEmail(reservation.email) === cleanEmail &&
       reservation.date === date &&
-      reservation.status !== "Cancelada"
-  );
+      reservation.status !== "Cancelada" &&
+      (!operation || reservation.operation === operation)
+  ).length;
+}
+
+function hasReservationForEmailOnDate(reservations, email, date) {
+  return countReservationsForEmailOnDate(reservations, email, date) > 0;
+}
+
+function hasReachedDeliveryReservationLimit(reservations, email, date, config) {
+  const maxReservations = getDeliveryCounterConfig(config).maxDeliveryReservationsPerDay;
+  return countReservationsForEmailOnDate(reservations, email, date, "Entrega de mercancía") >= maxReservations;
 }
 
 function dateToIso(date) {
@@ -365,8 +648,8 @@ function getOccupancyBadgeStyle(used, capacity, thresholds) {
   return styles[level] || styles.green;
 }
 
-function shouldBlockSlotSelection(reservations, email, date) {
-  return hasReservationForEmailOnDate(reservations, email, date);
+function shouldBlockSlotSelection(reservations, email, date, config) {
+  return hasReachedDeliveryReservationLimit(reservations, email, date, config);
 }
 
 function getReservationsForEmail(reservations, email) {
@@ -570,7 +853,7 @@ export default function App() {
   const [bookingLimitWarning, setBookingLimitWarning] = useState(false);
   const [loginMessage, setLoginMessage] = useState(null);
   const [transporterProfile, setTransporterProfile] = useState({ company: "", fullName: "", phone: "" });
-  const [form, setForm] = useState({ awb: "", phone: "", operation: "Entrega de mercancía", notes: "" });
+  const [form, setForm] = useState({ awb: "", phone: "", operation: "Entrega de mercancía", deliveryType: "General", deliverySubtype: "Sin aduana", awbQuantityRange: "Entre 1 y 3", notes: "" });
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
   const [adminLogin, setAdminLogin] = useState({ username: "", password: "" });
   const [adminLoginMessage, setAdminLoginMessage] = useState(null);
@@ -677,16 +960,54 @@ export default function App() {
   }, []);
 
   const slots = useMemo(() => buildSlots(config), [config]);
-  const maxDocks = useMemo(() => getMaxDocks(config), [config]);
-  const dayStart = useMemo(() => getDayStart(config), [config]);
-  const dayEnd = useMemo(() => getDayEnd(config), [config]);
+  const maxDocks = useMemo(() => Math.max(getMaxDocks(config), getDeliveryCounterConfig(config).deliveryDocks), [config]);
+  const dayStart = useMemo(() => getDeliveryCounterConfig(config).startTime, [config]);
+  const dayEnd = useMemo(() => getDeliveryCounterConfig(config).endTime, [config]);
+
+  useEffect(() => {
+    setForm((current) => {
+      if (current.operation !== "Entrega de mercancía") return current;
+      const normalized = normalizeDeliverySelection(config, current);
+      if (
+        current.deliveryType === normalized.deliveryType &&
+        current.deliverySubtype === normalized.deliverySubtype &&
+        current.awbQuantityRange === normalized.awbQuantityRange
+      ) {
+        return current;
+      }
+      return { ...current, ...normalized };
+    });
+  }, [config.deliveryRules]);
 
   function updateAuthForm(field, value) {
     setAuthForm((current) => ({ ...current, [field]: value }));
   }
 
   function updateForm(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+
+      if (field === "operation") {
+        setSelectedSlot("");
+        setBookingLimitWarning(false);
+      }
+
+      if (field === "deliveryType") {
+        const normalized = normalizeDeliverySelection(config, { ...next, deliverySubtype: "", awbQuantityRange: "" });
+        return { ...next, ...normalized };
+      }
+
+      if (field === "deliverySubtype") {
+        const normalized = normalizeDeliverySelection(config, { ...next, awbQuantityRange: "" });
+        return { ...next, ...normalized };
+      }
+
+      if (field === "awbQuantityRange") {
+        setSelectedSlot("");
+      }
+
+      return next;
+    });
   }
 
   function scrollToMessage() {
@@ -867,7 +1188,7 @@ export default function App() {
   }
 
   function selectTransporterSlot(slotTime) {
-    if (shouldBlockSlotSelection(reservations, transporterEmail, selectedDate)) {
+    if (shouldBlockSlotSelection(reservations, transporterEmail, selectedDate, config)) {
       setMessage(null);
       setBookingLimitWarning(true);
       setSelectedSlot("");
@@ -886,32 +1207,70 @@ export default function App() {
     return index < 0 ? 0 : index;
   }
 
+  const selectedDeliveryRule = useMemo(() => {
+    if (form.operation !== "Entrega de mercancía") return null;
+    return findDeliveryRule(config, form.deliveryType, form.deliverySubtype, form.awbQuantityRange);
+  }, [config, form.operation, form.deliveryType, form.deliverySubtype, form.awbQuantityRange]);
+
+  const counterStartSlots = useMemo(() => buildCounterStartSlots(config, selectedDeliveryRule), [config, selectedDeliveryRule]);
+
   const availability = useMemo(() => {
-    return slots.map((slot) => {
-      const used = getReservationsForSlot(selectedDate, slot.time).length;
-      const available = Math.max(Number(slot.docks || 1) - used, 0);
-      return { ...slot, used, available, full: available === 0 };
+    if (form.operation !== "Entrega de mercancía" || !selectedDeliveryRule) return [];
+    return counterStartSlots.map((slot) => {
+      const status = getDeliveryAvailabilityForStart(reservations, selectedDate, config, selectedDeliveryRule, slot.time);
+      return {
+        ...slot,
+        ...status,
+        available: Boolean(status?.available),
+        full: !status?.available,
+      };
     });
-  }, [slots, selectedDate, reservations]);
+  }, [counterStartSlots, selectedDate, reservations, config, selectedDeliveryRule, form.operation]);
+
+  const selectedSlotAvailability = useMemo(() => {
+    if (!selectedSlot || !selectedDeliveryRule) return null;
+    return getDeliveryAvailabilityForStart(reservations, selectedDate, config, selectedDeliveryRule, selectedSlot);
+  }, [reservations, selectedDate, config, selectedDeliveryRule, selectedSlot]);
 
   const adminRows = useMemo(() => {
-    return slots.map((slot) => {
-      const slotReservations = getReservationsForSlot(adminDate, slot.time);
-      return { ...slot, used: slotReservations.length, available: Math.max(Number(slot.docks || 1) - slotReservations.length, 0), reservations: slotReservations };
+    const counter = getDeliveryCounterConfig(config);
+    const slotsForAdmin = buildCounterStartSlots(config, { counterMinutes: counter.stepMinutes, deliveryDockMinutes: 0 });
+    return slotsForAdmin.map((slot) => {
+      const startTime = slot.time;
+      const endTime = addMinutesToClock(startTime, counter.stepMinutes);
+      const reservationsForWindow = getReservationsOverlappingCounterWindow(reservations, adminDate, startTime, counter.stepMinutes);
+      return {
+        ...slot,
+        endTime,
+        used: countCounterOccupancy(reservations, adminDate, startTime, endTime),
+        docks: counter.counters,
+        available: Math.max(counter.counters - countCounterOccupancy(reservations, adminDate, startTime, endTime), 0),
+        reservations: reservationsForWindow,
+      };
     });
-  }, [slots, adminDate, reservations]);
+  }, [config, adminDate, reservations]);
 
   const ganttReservations = useMemo(() => {
     return reservations
-      .filter((reservation) => reservation.date === ganttDate && reservation.status !== "Cancelada")
-      .map((reservation) => {
-        const slot = getSlotByTime(slots, reservation.time);
-        const duration = slot ? slot.slotMinutes : 30;
-        const dockIndex = getDockIndexForReservation(reservation.date, reservation.time, reservation.id);
-        return { ...reservation, endTime: addMinutes(reservation.time, duration), duration, dockIndex };
-      })
-      .filter((reservation) => reservation.dockIndex < maxDocks);
-  }, [reservations, ganttDate, slots, maxDocks]);
+      .filter((reservation) => reservation.date === ganttDate && isActiveDeliveryReservation(reservation))
+      .map((reservation) => ({
+        ...reservation,
+        counterStart: reservation.counterStart || reservation.time,
+        counterEnd: getCounterEndForReservation(reservation),
+        counterBlockEnd:
+          reservation.counterBlockEnd ||
+          addMinutesToClock(
+            reservation.counterStart || reservation.time,
+            roundUpMinutes(Number(reservation.counterDuration || 0), getDeliveryCounterConfig(config).stepMinutes)
+          ),
+        deliveryDockStart: reservation.deliveryDockStart || getCounterEndForReservation(reservation),
+        deliveryDockEnd: getDeliveryDockEndForReservation(reservation),
+        counterIndex: Number(reservation.counterIndex || 0),
+        deliveryDockIndex: Number(
+          Number.isFinite(Number(reservation.deliveryDockIndex)) ? reservation.deliveryDockIndex : reservation.dockIndex || 0
+        ),
+      }));
+  }, [reservations, ganttDate, config]);
 
   const transporterReservations = useMemo(() => getReservationsForEmail(reservations, transporterEmail), [reservations, transporterEmail]);
   const profileMonthDays = useMemo(() => getMonthDaysGrid(profileMonth), [profileMonth]);
@@ -925,11 +1284,24 @@ export default function App() {
     return grouped;
   }, [transporterReservations]);
 
-  const alreadyBookedSelectedDate = hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate);
-  const canSubmit = Boolean(transporterEmail && !alreadyBookedSelectedDate && form.awb.trim() && transporterProfile.company && transporterProfile.fullName && selectedDate && selectedSlot);
+  const deliveryReservationsForSelectedDate = countReservationsForEmailOnDate(reservations, transporterEmail, selectedDate, "Entrega de mercancía");
+  const maxDeliveryReservationsPerDay = getDeliveryCounterConfig(config).maxDeliveryReservationsPerDay;
+  const hasReachedDeliveryLimitForSelectedDate = deliveryReservationsForSelectedDate >= maxDeliveryReservationsPerDay;
+  const canSubmit = Boolean(
+    transporterEmail &&
+    !hasReachedDeliveryLimitForSelectedDate &&
+    form.operation === "Entrega de mercancía" &&
+    form.awb.trim() &&
+    transporterProfile.company &&
+    transporterProfile.fullName &&
+    selectedDeliveryRule &&
+    selectedDate &&
+    selectedSlot &&
+    selectedSlotAvailability?.available
+  );
 
   const activeReservations = reservations.filter((reservation) => reservation.date === adminDate && reservation.status !== "Cancelada");
-  const dailyCapacity = getDailyCapacity(config);
+  const dailyCapacity = getDeliveryCounterConfig(config).counters * buildCounterStartSlots(config, { counterMinutes: getDeliveryCounterConfig(config).stepMinutes, deliveryDockMinutes: 0 }).length;
   const weekDays = getWeekDays(adminDate);
   const weeklyReservations = weekDays.map((date) => ({ date, dayName: dayLabelFromIso(date), count: countActiveReservationsForDate(reservations, date), capacity: dailyCapacity }));
   const weeklyTotalReservations = weeklyReservations.reduce((sum, day) => sum + day.count, 0);
@@ -941,40 +1313,71 @@ export default function App() {
       scrollToMessage();
       return;
     }
-    if (hasReservationForEmailOnDate(reservations, transporterEmail, selectedDate)) {
+
+    if (form.operation === "Retirada de mercancía") {
+      setMessage({ type: "error", text: "La logica de slots para Retirada de mercancia todavia esta pendiente de definir." });
+      scrollToMessage();
+      return;
+    }
+
+    if (!selectedDeliveryRule) {
+      setMessage({ type: "error", text: "Selecciona tipo de entrega, subtipo y cantidad de AWBs." });
+      scrollToMessage();
+      return;
+    }
+
+    if (hasReachedDeliveryReservationLimit(reservations, transporterEmail, selectedDate, config)) {
       setMessage(null);
       setBookingLimitWarning(true);
       setSelectedSlot("");
       scrollToBookingLimitWarning();
       return;
     }
-    const selectedSlotInfo = getSlotByTime(slots, selectedSlot);
-    const capacity = selectedSlotInfo ? Number(selectedSlotInfo.docks || 1) : 1;
-    const usedNow = getReservationsForSlot(selectedDate, selectedSlot).length;
-    if (usedNow >= capacity) {
-      setMessage({ type: "error", text: "Ese slot acaba de ocuparse. Selecciona otro horario." });
+
+    const latestAvailability = getDeliveryAvailabilityForStart(reservations, selectedDate, config, selectedDeliveryRule, selectedSlot);
+
+    if (!latestAvailability?.available) {
+      setMessage({ type: "error", text: "Ese horario acaba de ocuparse. Selecciona otra hora de mostrador." });
       scrollToMessage();
       return;
     }
-    const assignedDockIndex = findFirstAvailableDock(reservations, selectedDate, selectedSlot, capacity);
+
     const confirmationCode = generateConfirmationCode();
+    const reservationMeta = {
+      notesText: form.notes.trim(),
+      deliveryType: form.deliveryType,
+      deliverySubtype: form.deliverySubtype,
+      awbQuantityRange: form.awbQuantityRange,
+      counterDuration: latestAvailability.counterDuration,
+      deliveryDockDuration: latestAvailability.deliveryDockDuration,
+      counterStart: latestAvailability.counterStart,
+      counterEnd: latestAvailability.counterEnd,
+      counterBlockEnd: latestAvailability.counterBlockEnd,
+      deliveryDockStart: latestAvailability.deliveryDockStart,
+      deliveryDockEnd: latestAvailability.deliveryDockEnd,
+      counterIndex: latestAvailability.counterIndex,
+      deliveryDockIndex: latestAvailability.deliveryDockIndex,
+    };
+
     const newReservation = {
       id: "RSV-" + Math.floor(100000 + Math.random() * 900000),
       email: transporterEmail,
       confirmationCode,
       date: selectedDate,
-      time: selectedSlot,
+      time: latestAvailability.counterStart,
       plate: "",
       awb: form.awb.trim(),
       company: transporterProfile.company,
       contact: transporterProfile.fullName,
       phone: form.phone.trim(),
-      operation: form.operation,
-      notes: form.notes.trim(),
+      operation: "Entrega de mercancía",
+      notes: buildReservationNotes(reservationMeta),
       status: "Confirmada",
       createdAt: new Date().toLocaleString(),
-      dockIndex: assignedDockIndex,
+      dockIndex: latestAvailability.deliveryDockIndex,
+      ...reservationMeta,
     };
+
     try {
       const savedReservation = await insertReservationInDb(newReservation);
       const nextReservations = upsertReservationInList(reservations, savedReservation);
@@ -982,13 +1385,26 @@ export default function App() {
       if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
       setMessage({
         type: "success",
-        text: "Reserva confirmada: " + savedReservation.id + ". Codigo: " + savedReservation.confirmationCode + ". Puedes verla y cancelarla desde Mi perfil / reservas.",
+        text:
+          "Reserva confirmada: " +
+          savedReservation.id +
+          ". Codigo: " +
+          savedReservation.confirmationCode +
+          ". Mostrador " +
+          latestAvailability.counterStart +
+          "-" +
+          latestAvailability.counterEnd +
+          " y muelle entrega " +
+          latestAvailability.deliveryDockStart +
+          "-" +
+          latestAvailability.deliveryDockEnd +
+          ".",
       });
       setBookingLimitWarning(false);
       setActiveTab("perfil");
       scrollToMessage();
       setSelectedSlot("");
-      setForm({ awb: "", phone: transporterProfile.phone || "", operation: "Entrega de mercancía", notes: "" });
+      setForm((current) => ({ ...current, awb: "", phone: transporterProfile.phone || "", notes: "" }));
       if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
@@ -1034,30 +1450,71 @@ export default function App() {
   async function moveReservationToDock(id, dockIndex) {
     const targetReservation = reservations.find((reservation) => reservation.id === id);
     if (!targetReservation) return;
-    const slot = getSlotByTime(slots, targetReservation.time);
-    const capacity = slot ? Number(slot.docks || 1) : maxDocks;
+
     const targetDockIndex = Number(dockIndex);
+    const capacity = getDeliveryCounterConfig(config).deliveryDocks;
 
     if (!Number.isInteger(targetDockIndex) || targetDockIndex < 0) {
       setMessage({ type: "error", text: "Muelle seleccionado no valido." });
       return;
     }
+
     if (targetDockIndex >= capacity) {
-      setMessage({ type: "error", text: "Ese muelle no esta abierto para la franja de esta reserva." });
+      setMessage({ type: "error", text: "Ese muelle de entrega no esta disponible." });
       return;
     }
-    if (!isDockAvailable(reservations, id, targetReservation.date, targetReservation.time, targetDockIndex)) {
-      setMessage({ type: "error", text: "Ese muelle ya esta ocupado en el mismo slot. Elige otro muelle." });
+
+    const dockStart = targetReservation.deliveryDockStart || getCounterEndForReservation(targetReservation);
+    const dockEnd = getDeliveryDockEndForReservation(targetReservation);
+
+    const occupied = reservations.some((reservation) => {
+      if (reservation.id === id || !isActiveDeliveryReservation(reservation) || reservation.date !== targetReservation.date) return false;
+      const reservationDockIndex = Number(
+        Number.isFinite(Number(reservation.deliveryDockIndex)) ? reservation.deliveryDockIndex : reservation.dockIndex || 0
+      );
+      if (reservationDockIndex !== targetDockIndex) return false;
+      return intervalsOverlap(dockStart, dockEnd, reservation.deliveryDockStart || getCounterEndForReservation(reservation), getDeliveryDockEndForReservation(reservation));
+    });
+
+    if (occupied) {
+      setMessage({ type: "error", text: "Ese muelle ya esta ocupado durante la ventana de entrega. Elige otro muelle." });
       return;
     }
+
+    const currentMeta = parseReservationNotes(targetReservation.rawNotes || targetReservation.notes || "");
+    const nextNotes = buildReservationNotes({
+      ...currentMeta,
+      notesText: targetReservation.notes || currentMeta.notesText || "",
+      deliveryType: targetReservation.deliveryType || currentMeta.deliveryType || "",
+      deliverySubtype: targetReservation.deliverySubtype || currentMeta.deliverySubtype || "",
+      awbQuantityRange: targetReservation.awbQuantityRange || currentMeta.awbQuantityRange || "",
+      counterDuration: targetReservation.counterDuration || currentMeta.counterDuration || 0,
+      deliveryDockDuration: targetReservation.deliveryDockDuration || currentMeta.deliveryDockDuration || 0,
+      counterStart: targetReservation.counterStart || currentMeta.counterStart || targetReservation.time,
+      counterEnd: targetReservation.counterEnd || currentMeta.counterEnd || getCounterEndForReservation(targetReservation),
+      counterBlockEnd: targetReservation.counterBlockEnd || currentMeta.counterBlockEnd || "",
+      deliveryDockStart: dockStart,
+      deliveryDockEnd: dockEnd,
+      counterIndex: targetReservation.counterIndex || currentMeta.counterIndex || 0,
+      deliveryDockIndex: targetDockIndex,
+    });
+
     try {
-      const updatedReservation = await updateReservationInDb(id, { dock_index: targetDockIndex });
+      const updatedReservation = await updateReservationInDb(id, { dock_index: targetDockIndex, notes: nextNotes });
+      const localUpdated = {
+        ...targetReservation,
+        dockIndex: targetDockIndex,
+        deliveryDockIndex: targetDockIndex,
+        rawNotes: nextNotes,
+        notes: targetReservation.notes || "",
+      };
       const nextReservations = updatedReservation
         ? upsertReservationInList(reservations, updatedReservation)
-        : setReservationDockInList(reservations, id, targetDockIndex);
+        : upsertReservationInList(reservations, localUpdated);
+
       setReservations(nextReservations);
       if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
-      setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle " + dockName(targetDockIndex) + "." });
+      setMessage({ type: "success", text: "Reserva " + id + " movida al Muelle entrega " + dockName(targetDockIndex) + "." });
       if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
@@ -1123,6 +1580,51 @@ export default function App() {
     setConfig((current) => {
       if (current.timeRanges.length <= 1) return current;
       return { ...current, timeRanges: current.timeRanges.filter((range) => range.id !== id) };
+    });
+  }
+
+  function updateDeliveryCounter(field, value) {
+    setConfig((current) => ({
+      ...current,
+      deliveryCounter: {
+        ...current.deliveryCounter,
+        [field]: field === "startTime" || field === "endTime" ? value : Math.max(1, Number(value || 1)),
+      },
+    }));
+  }
+
+  function updateDeliveryRule(id, field, value) {
+    setConfig((current) => ({
+      ...current,
+      deliveryRules: current.deliveryRules.map((rule) =>
+        rule.id === id
+          ? {
+              ...rule,
+              [field]: field === "counterMinutes" || field === "deliveryDockMinutes" ? Math.max(1, Number(value || 1)) : value,
+            }
+          : rule
+      ),
+    }));
+  }
+
+  function addDeliveryRule() {
+    setConfig((current) => ({
+      ...current,
+      deliveryRules: current.deliveryRules.concat({
+        id: "DR-" + Date.now(),
+        deliveryType: "General",
+        subtype: "Nuevo subtipo",
+        awbQuantityRange: "N/A",
+        counterMinutes: 20,
+        deliveryDockMinutes: 15,
+      }),
+    }));
+  }
+
+  function removeDeliveryRule(id) {
+    setConfig((current) => {
+      if ((current.deliveryRules || []).length <= 1) return current;
+      return { ...current, deliveryRules: current.deliveryRules.filter((rule) => rule.id !== id) };
     });
   }
 
@@ -1266,68 +1768,121 @@ export default function App() {
     );
   }
 
-  function renderGantt() {
-    const startMinutes = timeToMinutes(dayStart);
-    const endMinutes = timeToMinutes(dayEnd);
+  function renderResourceGantt(title, resources, reservationsForGantt, resourceType) {
+    const counter = getDeliveryCounterConfig(config);
+    const startMinutes = timeToMinutes(counter.startTime);
+    const endMinutes = timeToMinutes(counter.endTime);
     const totalMinutes = Math.max(endMinutes - startMinutes, 1);
     const hourMarks = [];
     let mark = Math.ceil(startMinutes / 60) * 60;
+
     while (mark <= endMinutes) {
       hourMarks.push(mark);
       mark += 60;
     }
 
     return (
-      <div style={rs.ganttWrapper}>
-        <div style={rs.ganttHeader}>
-          <div style={{ padding: 12, fontWeight: 700 }}>Muelle</div>
-          <div style={{ position: "relative", height: 46 }}>
-            {hourMarks.map((minute) => {
-              const left = ((minute - startMinutes) / totalMinutes) * 100;
-              return <div key={minute} style={{ position: "absolute", left: left + "%", top: 8, fontSize: 12, color: "#64748b" }}>{minutesToTime(minute)}</div>;
-            })}
-          </div>
-        </div>
-
-        {Array.from({ length: maxDocks }).map((_, dockIndex) => (
-          <div style={rs.ganttRow} key={dockIndex}>
-            <div style={{ padding: 12, fontWeight: 800, background: "#f8fafc" }}>Muelle {dockName(dockIndex)}</div>
-            <div style={{ position: "relative", height: 64, background: "linear-gradient(to right, #f8fafc, #ffffff)" }}>
+      <div style={{ marginBottom: 22 }}>
+        <h3 style={{ margin: "0 0 10px" }}>{title}</h3>
+        <div style={rs.ganttWrapper}>
+          <div style={rs.ganttHeader}>
+            <div style={{ padding: 12, fontWeight: 700 }}>{resourceType === "counter" ? "Mostrador" : "Muelle"}</div>
+            <div style={{ position: "relative", height: 46 }}>
               {hourMarks.map((minute) => {
                 const left = ((minute - startMinutes) / totalMinutes) * 100;
-                return <div key={minute} style={{ position: "absolute", left: left + "%", top: 0, bottom: 0, borderLeft: "1px solid #e2e8f0" }} />;
+                return <div key={minute} style={{ position: "absolute", left: left + "%", top: 8, fontSize: 12, color: "#64748b" }}>{minutesToTime(minute)}</div>;
               })}
-              {ganttReservations
-                .filter((reservation) => reservation.dockIndex === dockIndex)
-                .map((reservation) => {
-                  const left = ((timeToMinutes(reservation.time) - startMinutes) / totalMinutes) * 100;
-                  const width = getGanttBarWidthPercent(reservation.duration, totalMinutes);
-                  const tooltip = buildGanttTooltip(reservation);
-                  return (
-                    <div
-                      key={reservation.id}
-                      title={tooltip}
-                      aria-label={tooltip}
-                      style={{
-                        position: "absolute",
-                        left: left + "%",
-                        top: 8,
-                        width: width + "%",
-                        minWidth: 0,
-                        height: 50,
-                        borderRadius: 10,
-                        background: reservation.operation === "Carga" ? "#dbeafe" : "#dcfce7",
-                        border: "1px solid #94a3b8",
-                        overflow: "hidden",
-                        boxSizing: "border-box",
-                        cursor: "help",
-                      }}
-                    />
-                  );
-                })}
             </div>
           </div>
-        ))}
+
+          {Array.from({ length: resources }).map((_, resourceIndex) => (
+            <div style={rs.ganttRow} key={resourceIndex}>
+              <div style={{ padding: 12, fontWeight: 800, background: "#f8fafc" }}>
+                {resourceType === "counter" ? "Mostrador " : "Muelle entrega "}{dockName(resourceIndex)}
+              </div>
+              <div style={{ position: "relative", height: 68, background: "linear-gradient(to right, #f8fafc, #ffffff)" }}>
+                {hourMarks.map((minute) => {
+                  const left = ((minute - startMinutes) / totalMinutes) * 100;
+                  return <div key={minute} style={{ position: "absolute", left: left + "%", top: 0, bottom: 0, borderLeft: "1px solid #e2e8f0" }} />;
+                })}
+
+                {reservationsForGantt
+                  .filter((reservation) =>
+                    resourceType === "counter"
+                      ? Number(reservation.counterIndex || 0) === resourceIndex
+                      : Number(reservation.deliveryDockIndex || reservation.dockIndex || 0) === resourceIndex
+                  )
+                  .map((reservation) => {
+                    const realStart = resourceType === "counter" ? reservation.counterStart : reservation.deliveryDockStart;
+                    const realEnd = resourceType === "counter" ? reservation.counterEnd : reservation.deliveryDockEnd;
+                    const visualEnd = resourceType === "counter" ? reservation.counterBlockEnd : reservation.deliveryDockEnd;
+                    const realLeft = ((timeToMinutes(realStart) - startMinutes) / totalMinutes) * 100;
+                    const visualWidth = Math.max(((timeToMinutes(visualEnd) - timeToMinutes(realStart)) / totalMinutes) * 100, 0.5);
+                    const realWidth = Math.max(((timeToMinutes(realEnd) - timeToMinutes(realStart)) / totalMinutes) * 100, 0.5);
+                    const tooltip = [
+                      "Reserva: " + reservation.id,
+                      "Empresa: " + (reservation.company || "-"),
+                      "Contacto: " + (reservation.contact || "-"),
+                      "AWB: " + (reservation.awb || "-"),
+                      "Tipo: " + (reservation.deliveryType || reservation.operation || "-"),
+                      "Subtipo: " + (reservation.deliverySubtype || "-"),
+                      "Cantidad AWBs: " + (reservation.awbQuantityRange || "-"),
+                      resourceType === "counter"
+                        ? "Mostrador real: " + realStart + "-" + realEnd
+                        : "Muelle entrega: " + realStart + "-" + realEnd,
+                      resourceType === "counter"
+                        ? "Bloque mostrado: " + realStart + "-" + visualEnd
+                        : "Duracion: " + (reservation.deliveryDockDuration || "-") + " min",
+                    ].join(String.fromCharCode(10));
+
+                    return (
+                      <div
+                        key={reservation.id + resourceType}
+                        title={tooltip}
+                        aria-label={tooltip}
+                        style={{
+                          position: "absolute",
+                          left: realLeft + "%",
+                          top: 10,
+                          width: visualWidth + "%",
+                          minWidth: 6,
+                          height: 48,
+                          borderRadius: 10,
+                          background: resourceType === "counter" ? "#dbeafe" : "#dcfce7",
+                          border: "1px solid #94a3b8",
+                          overflow: "hidden",
+                          boxSizing: "border-box",
+                          cursor: "help",
+                        }}
+                      >
+                        {resourceType === "counter" && (
+                          <div
+                            style={{
+                              height: "100%",
+                              width: Math.min(100, (realWidth / Math.max(visualWidth, 0.1)) * 100) + "%",
+                              background: "rgba(15, 23, 42, 0.25)",
+                              borderRadius: 10,
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function renderGantt() {
+    const counter = getDeliveryCounterConfig(config);
+
+    return (
+      <div>
+        {renderResourceGantt("Gantt mostrador de entrega", counter.counters, ganttReservations, "counter")}
+        {renderResourceGantt("Gantt muelle de entrega", counter.deliveryDocks, ganttReservations, "deliveryDock")}
       </div>
     );
   }
@@ -1434,7 +1989,8 @@ export default function App() {
             <h2 style={{ margin: 0 }}>Datos de identificacion</h2>
             <p style={rs.muted}>Sesion iniciada como <strong>{transporterEmail}</strong>.</p>
             <button style={rs.secondaryButton} onClick={logoutTransporter}>Salir / cambiar cuenta</button>
-            <p style={rs.muted}>Introduce los datos minimos para reservar un hueco. Solo puedes tener una reserva activa por dia.</p>
+            <p style={rs.muted}>Introduce los datos minimos para reservar un hueco. Puedes reservar hasta {maxDeliveryReservationsPerDay} slots de Entrega de mercancia al dia.</p>
+            <div style={{ ...rs.warning, marginTop: 12 }}>*Esta reserva no incluye perecederos y el ecommerce.</div>
             {(!transporterProfile.company || !transporterProfile.fullName) && (
               <div style={rs.warning}>Tu perfil no tiene empresa o contacto guardados. Cierra sesion y crea un perfil nuevo, o avisanos para actualizar tus datos.</div>
             )}
@@ -1444,15 +2000,52 @@ export default function App() {
             <label style={rs.label}>Contacto<input style={{ ...rs.input, background: "#f8fafc" }} value={transporterProfile.fullName} readOnly /></label>
             <label style={rs.label}>Email<input style={{ ...rs.input, background: "#f8fafc" }} value={transporterEmail} readOnly /></label>
             <label style={rs.label}>Telefono opcional<input style={rs.input} value={form.phone} onChange={(event) => updateForm("phone", event.target.value)} placeholder="Telefono de contacto" /></label>
-            <label style={rs.label}>Tipo de operacion<select style={rs.input} value={form.operation} onChange={(event) => updateForm("operation", event.target.value)}><option>Entrega de mercancía</option><option>Retirada de mercancía</option></select></label>
+            <label style={rs.label}>
+              Tipo de operacion
+              <select style={rs.input} value={form.operation} onChange={(event) => updateForm("operation", event.target.value)}>
+                <option>Entrega de mercancía</option>
+                <option>Retirada de mercancía</option>
+              </select>
+            </label>
+
+            {form.operation === "Entrega de mercancía" && (
+              <div style={rs.rangeCard}>
+                <h3 style={{ margin: "0 0 8px" }}>Datos de entrega</h3>
+                <label style={rs.label}>
+                  Tipo de entrega
+                  <select style={rs.input} value={form.deliveryType} onChange={(event) => updateForm("deliveryType", event.target.value)}>
+                    {getRuleDeliveryTypes(config).map((option) => <option key={option}>{option}</option>)}
+                  </select>
+                </label>
+                <label style={rs.label}>
+                  Subtipo
+                  <select style={rs.input} value={form.deliverySubtype} onChange={(event) => updateForm("deliverySubtype", event.target.value)}>
+                    {getRuleSubtypes(config, form.deliveryType).map((option) => <option key={option}>{option}</option>)}
+                  </select>
+                </label>
+                <label style={rs.label}>
+                  Cantidad de AWBs
+                  <select style={rs.input} value={form.awbQuantityRange} onChange={(event) => updateForm("awbQuantityRange", event.target.value)}>
+                    {getRuleAwbRanges(config, form.deliveryType, form.deliverySubtype).map((option) => <option key={option}>{option}</option>)}
+                  </select>
+                </label>
+              </div>
+            )}
+
+            {form.operation === "Retirada de mercancía" && (
+              <div style={rs.warning}>La logica de slots para Retirada de mercancia todavia esta pendiente de definir. De momento no se muestran horarios disponibles.</div>
+            )}
           </div>
 
           <div style={rs.card}>
             <div style={rs.sectionHeader}>
               <div>
-                <h2 style={{ margin: 0 }}>Selecciona dia y slot</h2>
-                <p style={rs.muted}>Cada slot usa la duracion y capacidad de su franja horaria configurada.</p>
-                {bookingLimitWarning && <p ref={bookingLimitRef} style={{ ...rs.error, marginTop: 12 }}>No puedes reservar mas de un slot al dia. Si necesitas cambiar la cita, cancela primero tu reserva actual en Mi perfil / reservas.</p>}
+                <h2 style={{ margin: 0 }}>Selecciona dia y hora de mostrador</h2>
+                <p style={rs.muted}>
+                  Las horas se muestran cada {getDeliveryCounterConfig(config).stepMinutes} minutos.
+                  La reserva bloquea mostrador y, justo despues, un muelle de entrega.
+                </p>
+                {bookingLimitWarning && <p ref={bookingLimitRef} style={{ ...rs.error, marginTop: 12 }}>No puedes reservar mas de {maxDeliveryReservationsPerDay} slots de Entrega de mercancia al dia.</p>}
               </div>
               <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>
                 Fecha
@@ -1462,28 +2055,53 @@ export default function App() {
 
             {message && <div ref={messageRef} style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
 
-            <div style={rs.slotGrid}>
-              {availability.map((slot) => {
-                const occupancyStyle = getOccupancyBadgeStyle(slot.used, slot.docks, config.occupancyThresholds);
-                const currentSlotStyle = selectedSlot === slot.time
-                  ? { ...rs.slot, ...rs.slotSelected }
-                  : slot.full
-                    ? { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.borderColor, cursor: "not-allowed" }
-                    : { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.borderColor };
-                const availableText = slot.full ? "Completo" : slot.available + " hueco" + (slot.available === 1 ? "" : "s") + " disponible" + (slot.available === 1 ? "" : "s");
-                return (
-                  <button key={slot.rangeId + slot.time} disabled={slot.full} style={currentSlotStyle} onClick={() => selectTransporterSlot(slot.time)}>
-                    <strong style={{ display: "block", fontSize: 20 }}>{slot.time}</strong>
-                    <span style={{ display: "block", marginTop: 8 }}>{availableText}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {form.operation === "Retirada de mercancía" && (
+              <div style={rs.warning}>La seleccion de horarios para Retirada de mercancia todavia no esta disponible.</div>
+            )}
+
+            {form.operation === "Entrega de mercancía" && !selectedDeliveryRule && (
+              <div style={rs.error}>Selecciona tipo de entrega, subtipo y cantidad de AWBs para ver horarios disponibles.</div>
+            )}
+
+            {form.operation === "Entrega de mercancía" && selectedDeliveryRule && (
+              <div style={{ ...rs.slotGrid, gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fit, minmax(120px, 1fr))", alignItems: "start" }}>
+                {availability.map((slot) => {
+                  const occupancyStyle = getOccupancyBadgeStyle(slot.counterUsed, slot.counterCapacity, config.occupancyThresholds);
+                  const currentSlotStyle = selectedSlot === slot.time
+                    ? { ...rs.slot, ...rs.slotSelected }
+                    : slot.full
+                      ? { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.borderColor, cursor: "not-allowed", opacity: 0.65 }
+                      : { ...rs.slot, ...occupancyStyle, borderColor: occupancyStyle.borderColor };
+
+                  const compactSlotStyle = {
+                    ...currentSlotStyle,
+                    minHeight: "auto",
+                    padding: "10px 14px",
+                    borderRadius: 14,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    justifyContent: "center",
+                    gap: 3,
+                    lineHeight: 1.15,
+                  };
+
+                  return (
+                    <button key={slot.time} disabled={slot.full} style={compactSlotStyle} onClick={() => selectTransporterSlot(slot.time)}>
+                      <strong style={{ display: "block", fontSize: 20, lineHeight: 1 }}>{slot.time}</strong>
+                      <span style={{ display: "block", fontSize: 13, fontWeight: 800 }}>
+                        {slot.full ? "Ocupado" : "Disponible"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <div style={rs.confirmBox}>
               <div>
-                <strong>Slot seleccionado: {selectedSlot || "ninguno"}</strong>
-                <p style={{ margin: "6px 0 0", color: "#64748b" }}>Al confirmar se vuelve a validar la disponibilidad para evitar doble reserva.</p>
+                <strong>Hora de mostrador seleccionada: {selectedSlot || "ninguna"}</strong>
+                <p style={{ margin: "6px 0 0", color: "#64748b" }}>Al confirmar se vuelve a validar la disponibilidad de mostrador y muelle de entrega.</p>
               </div>
               <button style={canSubmit ? rs.primaryButton : { ...rs.primaryButton, ...rs.disabledButton }} disabled={!canSubmit} onClick={createReservation}>Confirmar reserva</button>
             </div>
@@ -1616,8 +2234,6 @@ export default function App() {
             <div style={{ display: "grid", gap: 18 }}>
               <div style={rs.stats}>
                 <div style={rs.stat}><span>Reservas activas</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{activeReservations.length}</strong></div>
-                <div style={rs.stat}><span>Capacidad diaria</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{dailyCapacity}</strong></div>
-                <div style={rs.stat}><span>Maximo muelles</span><strong style={{ display: "block", marginTop: 8, fontSize: 30 }}>{maxDocks}</strong></div>
               </div>
               <div style={rs.slotGrid}>
                 {adminRows.map((row) => {
@@ -1630,8 +2246,8 @@ export default function App() {
                       onClick={() => setSelectedAdminSlot(isSelected ? "" : row.time)}
                     >
                       <strong style={{ display: "block", fontSize: 20 }}>{row.time}</strong>
-                      <span style={{ display: "block", marginTop: 8 }}>{row.used}/{row.docks} muelles ocupados</span>
-                      <small style={{ display: "block", marginTop: 8 }}>{row.slotMinutes} min</small>
+                      <span style={{ display: "block", marginTop: 8 }}>{row.used}/{row.docks} mostradores ocupados</span>
+                      
                     </button>
                   );
                 })}
@@ -1640,14 +2256,15 @@ export default function App() {
               {selectedAdminSlot && (
                 <div style={rs.rangeCard}>
                   <h3 style={{ marginTop: 0 }}>Detalle del slot {selectedAdminSlot}</h3>
-                  {getReservationsForSlot(adminDate, selectedAdminSlot).length === 0 && <p style={rs.muted}>No hay reservas en este slot.</p>}
-                  {getReservationsForSlot(adminDate, selectedAdminSlot).map((reservation) => (
+                  {getReservationsOverlappingCounterWindow(reservations, adminDate, selectedAdminSlot, getDeliveryCounterConfig(config).stepMinutes).length === 0 && <p style={rs.muted}>No hay reservas en este intervalo de mostrador.</p>}
+                  {getReservationsOverlappingCounterWindow(reservations, adminDate, selectedAdminSlot, getDeliveryCounterConfig(config).stepMinutes).map((reservation) => (
                     <div style={rs.reservationItem} key={reservation.id}>
                       <div>
                         <strong>{reservation.company}{reservation.plate ? " - " + reservation.plate : ""}</strong>
                         <p style={{ margin: "5px 0 0", color: "#64748b" }}>Reserva {reservation.id} - AWB {reservation.awb}</p>
                         <p style={{ margin: "5px 0 0", color: "#64748b" }}>Transportista: {reservation.email}</p>
-                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Muelle asignado en Gantt: <strong>Muelle {dockName(Number(reservation.dockIndex || 0))}</strong></p>
+                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Mostrador: <strong>{reservation.counterStart || reservation.time}-{getCounterEndForReservation(reservation)}</strong> · Muelle entrega: <strong>{reservation.deliveryDockStart || getCounterEndForReservation(reservation)}-{getDeliveryDockEndForReservation(reservation)}</strong></p>
+                        <p style={{ margin: "5px 0 0", color: "#64748b" }}>Asignacion: <strong>Mostrador {dockName(Number(reservation.counterIndex || 0))}</strong> · <strong>Muelle entrega {dockName(Number(reservation.deliveryDockIndex || reservation.dockIndex || 0))}</strong></p>
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         <span style={reservation.status === "Cancelada" ? { ...rs.badge, ...rs.dangerBadge } : rs.badge}>{reservation.status}</span>
@@ -1683,18 +2300,22 @@ export default function App() {
             {ganttReservations.length === 0 && <p style={rs.muted}>No hay reservas activas para esta fecha.</p>}
 
             {ganttReservations.map((reservation) => {
-              const slot = getSlotByTime(slots, reservation.time);
-              const capacity = slot ? Number(slot.docks || 1) : maxDocks;
+              const capacity = getDeliveryCounterConfig(config).deliveryDocks;
               return (
                 <div style={rs.reservationItem} key={reservation.id}>
                   <div>
-                    <strong>{reservation.id} - {reservation.time}-{reservation.endTime} - {reservation.company}</strong>
-                    <p style={{ margin: "5px 0 0", color: "#64748b" }}>AWB {reservation.awb} - {reservation.company} - muelle actual {dockName(reservation.dockIndex)}</p>
+                    <strong>{reservation.id} - Mostrador {reservation.counterStart}-{reservation.counterEnd} - {reservation.company}</strong>
+                    <p style={{ margin: "5px 0 0", color: "#64748b" }}>
+                      AWB {reservation.awb} · {reservation.deliveryType || reservation.operation} · {reservation.deliverySubtype || "-"} · {reservation.awbQuantityRange || "-"}
+                    </p>
+                    <p style={{ margin: "5px 0 0", color: "#64748b" }}>
+                      Muelle entrega actual {dockName(Number(reservation.deliveryDockIndex || reservation.dockIndex || 0))}: {reservation.deliveryDockStart}-{reservation.deliveryDockEnd}
+                    </p>
                   </div>
-                  <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 160 }}>
-                    Mover a muelle
-                    <select style={rs.input} value={reservation.dockIndex} onChange={(event) => moveReservationToDock(reservation.id, event.target.value)}>
-                      {Array.from({ length: capacity }).map((_, dockIndex) => <option key={dockIndex} value={dockIndex}>Muelle {dockName(dockIndex)}</option>)}
+                  <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>
+                    Mover a muelle de entrega
+                    <select style={rs.input} value={reservation.deliveryDockIndex || reservation.dockIndex || 0} onChange={(event) => moveReservationToDock(reservation.id, event.target.value)}>
+                      {Array.from({ length: capacity }).map((_, dockIndex) => <option key={dockIndex} value={dockIndex}>Muelle entrega {dockName(dockIndex)}</option>)}
                     </select>
                   </label>
                 </div>
@@ -1702,7 +2323,7 @@ export default function App() {
             })}
           </div>
 
-          <div style={rs.warning}>Si el muelle elegido ya esta ocupado en el mismo slot, la app bloquea el cambio para evitar solapes.</div>
+          <div style={rs.warning}>Si el muelle elegido ya esta ocupado durante la ventana real de entrega, la app bloquea el cambio para evitar solapes.</div>
         </section>
       )}
 
@@ -1710,45 +2331,65 @@ export default function App() {
         <section style={rs.card}>
           <div style={rs.sectionHeader}>
             <div>
-              <h2 style={{ margin: 0 }}>Configuracion por franjas horarias</h2>
-              <p style={rs.muted}>Puedes crear varias franjas con diferente duracion de slot y diferente numero de muelles abiertos.</p>
+              <h2 style={{ margin: 0 }}>Configuracion de entrega de mercancia</h2>
+              <p style={rs.muted}>Configura horarios de mostrador, numero de mostradores, muelles de entrega y la tabla de duraciones por tipo de entrega.</p>
             </div>
-            <button style={rs.primaryButton} onClick={addRange}>Anadir franja</button>
+            <button style={rs.primaryButton} onClick={addDeliveryRule}>Anadir regla de duracion</button>
+          </div>
+
+
+          <div style={rs.rangeCard}>
+            <h3 style={{ margin: "0 0 8px" }}>Atencion de mostrador y muelles de entrega</h3>
+            <p style={rs.muted}>Las horas disponibles para transportistas se generan desde la hora de inicio hasta la hora de fin, en intervalos configurables.</p>
+            <div style={rs.configGrid}>
+              <label style={rs.label}>Hora inicio atencion<input style={rs.input} type="time" value={config.deliveryCounter.startTime} onChange={(event) => updateDeliveryCounter("startTime", event.target.value)} /></label>
+              <label style={rs.label}>Hora fin atencion<input style={rs.input} type="time" value={config.deliveryCounter.endTime} onChange={(event) => updateDeliveryCounter("endTime", event.target.value)} /></label>
+              <label style={rs.label}>Intervalo visible de horas<input style={rs.input} type="number" min="5" value={config.deliveryCounter.stepMinutes} onChange={(event) => updateDeliveryCounter("stepMinutes", event.target.value)} /></label>
+              <label style={rs.label}>Numero de mostradores<input style={rs.input} type="number" min="1" value={config.deliveryCounter.counters} onChange={(event) => updateDeliveryCounter("counters", event.target.value)} /></label>
+              <label style={rs.label}>Numero de muelles de entrega<input style={rs.input} type="number" min="1" value={config.deliveryCounter.deliveryDocks} onChange={(event) => updateDeliveryCounter("deliveryDocks", event.target.value)} /></label>
+              <label style={rs.label}>Maximo slots por persona/dia<input style={rs.input} type="number" min="1" value={config.deliveryCounter.maxDeliveryReservationsPerDay || 3} onChange={(event) => updateDeliveryCounter("maxDeliveryReservationsPerDay", event.target.value)} /></label>
+            </div>
+          </div>
+
+          <div style={rs.rangeCard}>
+            <h3 style={{ margin: "0 0 8px" }}>Tabla de duraciones por tipo de entrega</h3>
+            <p style={rs.muted}>Edita la cantidad de AWBs y las duraciones de mostrador y muelle de entrega. Estos valores se aplican al calcular los slots disponibles.</p>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.1fr 1.4fr 1fr 0.8fr 0.9fr 90px", gap: 8, fontWeight: 800, color: "#475569" }}>
+                <span>Tipo entrega</span>
+                <span>Subtipo</span>
+                <span>Cantidad AWBs</span>
+                <span>Min mostrador</span>
+                <span>Min muelle entrega</span>
+                <span></span>
+              </div>
+
+              {config.deliveryRules.map((rule) => (
+                <div key={rule.id} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.1fr 1.4fr 1fr 0.8fr 0.9fr 90px", gap: 8, alignItems: "center" }}>
+                  <input style={rs.input} value={rule.deliveryType} onChange={(event) => updateDeliveryRule(rule.id, "deliveryType", event.target.value)} />
+                  <input style={rs.input} value={rule.subtype} onChange={(event) => updateDeliveryRule(rule.id, "subtype", event.target.value)} />
+                  <input style={rs.input} value={rule.awbQuantityRange} onChange={(event) => updateDeliveryRule(rule.id, "awbQuantityRange", event.target.value)} />
+                  <input style={rs.input} type="number" min="1" value={rule.counterMinutes} onChange={(event) => updateDeliveryRule(rule.id, "counterMinutes", event.target.value)} />
+                  <input style={rs.input} type="number" min="1" value={rule.deliveryDockMinutes} onChange={(event) => updateDeliveryRule(rule.id, "deliveryDockMinutes", event.target.value)} />
+                  <button style={rs.dangerButton} onClick={() => removeDeliveryRule(rule.id)}>Quitar</button>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div style={rs.rangeCard}>
             <h3 style={{ margin: "0 0 8px" }}>Rangos de color de ocupacion</h3>
-            <p style={rs.muted}>Configura los umbrales que pintan los indicadores de ocupacion. Por defecto: verde por debajo del 50%, amarillo entre 50% y 90%, naranja por encima del 90%, rojo al 100%.</p>
+            <p style={rs.muted}>Configura los umbrales que pintan los indicadores de ocupacion.</p>
             <div style={rs.configGrid}>
               <label style={rs.label}>Verde hasta menor que (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.greenMax} onChange={(event) => updateOccupancyThreshold("greenMax", event.target.value)} /></label>
               <label style={rs.label}>Amarillo hasta (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.yellowMax} onChange={(event) => updateOccupancyThreshold("yellowMax", event.target.value)} /></label>
               <label style={rs.label}>Naranja hasta (%)<input style={rs.input} type="number" min="0" max="100" value={config.occupancyThresholds.orangeMax} onChange={(event) => updateOccupancyThreshold("orangeMax", event.target.value)} /></label>
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(20, 100, config.occupancyThresholds) }}>20%</span>
-              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(60, 100, config.occupancyThresholds) }}>60%</span>
-              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(95, 100, config.occupancyThresholds) }}>95%</span>
-              <span style={{ ...rs.badge, ...getOccupancyBadgeStyle(100, 100, config.occupancyThresholds) }}>100%</span>
-            </div>
           </div>
 
-          {config.timeRanges.map((range, index) => (
-            <div style={rs.rangeCard} key={range.id}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                <strong>Franja {index + 1}</strong>
-                <button style={config.timeRanges.length <= 1 ? { ...rs.dangerButton, ...rs.disabledButton } : rs.dangerButton} disabled={config.timeRanges.length <= 1} onClick={() => removeRange(range.id)}>Eliminar</button>
-              </div>
-              <div style={rs.configGrid}>
-                <label style={rs.label}>Hora inicio<input style={rs.input} type="time" value={range.startTime} onChange={(event) => updateRange(range.id, "startTime", event.target.value)} /></label>
-                <label style={rs.label}>Hora fin<input style={rs.input} type="time" value={range.endTime} onChange={(event) => updateRange(range.id, "endTime", event.target.value)} /></label>
-                <label style={rs.label}>Duracion slot<select style={rs.input} value={range.slotMinutes} onChange={(event) => updateRange(range.id, "slotMinutes", event.target.value)}><option value="15">15 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option><option value="90">90 minutos</option></select></label>
-                <label style={rs.label}>Muelles abiertos<input style={rs.input} type="number" min="1" value={range.docks} onChange={(event) => updateRange(range.id, "docks", event.target.value)} /></label>
-              </div>
-              <p style={{ ...rs.muted, marginBottom: 0 }}>Slots generados en esta franja: {buildSlotsForRange(range).length}</p>
-            </div>
-          ))}
 
-          <div style={rs.warning}>Evita solapar franjas si quieres una disponibilidad limpia. Si dos franjas tienen la misma hora de inicio, el sistema las mostrara como slots separados con la misma hora. Los rangos de color se aplican a la vista semanal y a los indicadores de ocupacion por slot.</div>
+          <div style={rs.warning}>La opcion Retirada de mercancia queda visible en el formulario, pero no muestra horarios porque su logica todavia esta pendiente. Los cambios de configuracion, incluido el maximo de slots por persona y dia, se aplican en esta sesion de la app; para hacerlos permanentes y compartidos entre usuarios conviene guardarlos en una tabla de configuracion de Supabase.</div>
         </section>
       )}
     </main>
