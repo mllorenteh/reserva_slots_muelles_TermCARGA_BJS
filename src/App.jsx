@@ -853,6 +853,7 @@ export default function App() {
   const [bookingLimitWarning, setBookingLimitWarning] = useState(false);
   const [loginMessage, setLoginMessage] = useState(null);
   const [transporterProfile, setTransporterProfile] = useState({ company: "", fullName: "", phone: "" });
+  const [profileEdit, setProfileEdit] = useState({ company: "", fullName: "", phone: "" });
   const [form, setForm] = useState({ awb: "", phone: "", operation: "Entrega de mercancía", deliveryType: "General", deliverySubtype: "Sin aduana", awbQuantityRange: "Entre 1 y 3", notes: "" });
   const [adminLoggedIn, setAdminLoggedIn] = useState(false);
   const [adminLogin, setAdminLogin] = useState({ username: "", password: "" });
@@ -865,12 +866,14 @@ export default function App() {
     if (!user?.email) {
       setTransporterEmail("");
       setTransporterProfile({ company: "", fullName: "", phone: "" });
+      setProfileEdit({ company: "", fullName: "", phone: "" });
       return;
     }
 
     const profile = getTransporterProfileFromUser(user);
     setTransporterEmail(normalizeEmail(user.email));
     setTransporterProfile(profile);
+    setProfileEdit(profile);
     setForm((current) => ({
       ...current,
       phone: current.phone || profile.phone || "",
@@ -953,6 +956,7 @@ export default function App() {
         setTransporterSession(null);
         setTransporterEmail("");
         setTransporterProfile({ company: "", fullName: "", phone: "" });
+        setProfileEdit({ company: "", fullName: "", phone: "" });
       }
     });
 
@@ -1089,6 +1093,7 @@ export default function App() {
         data: {
           company: authForm.company.trim(),
           fullName: authForm.fullName.trim(),
+          full_name: authForm.fullName.trim(),
           phone: authForm.phone.trim(),
         },
       },
@@ -1172,6 +1177,65 @@ export default function App() {
     window.history.replaceState({}, document.title, cleanUrl);
   }
 
+  function updateProfileEdit(field, value) {
+    setProfileEdit((current) => ({ ...current, [field]: value }));
+  }
+
+  async function saveTransporterProfile() {
+    if (!supabase) {
+      setMessage({ type: "error", text: "Supabase no esta configurado. No se puede guardar el perfil." });
+      return;
+    }
+
+    const nextProfile = {
+      company: String(profileEdit.company || "").trim(),
+      fullName: String(profileEdit.fullName || "").trim(),
+      phone: String(profileEdit.phone || "").trim(),
+    };
+
+    if (!nextProfile.company) {
+      setMessage({ type: "error", text: "Introduce el nombre de tu empresa transportista." });
+      return;
+    }
+
+    if (!nextProfile.fullName) {
+      setMessage({ type: "error", text: "Introduce el nombre y apellidos de la persona de contacto." });
+      return;
+    }
+
+    const currentMetadata = transporterSession?.user?.user_metadata || {};
+    const { data, error } = await supabase.auth.updateUser({
+      data: {
+        ...currentMetadata,
+        company: nextProfile.company,
+        fullName: nextProfile.fullName,
+        full_name: nextProfile.fullName,
+        phone: nextProfile.phone,
+      },
+    });
+
+    if (error) {
+      setMessage({ type: "error", text: error.message });
+      return;
+    }
+
+    setTransporterProfile(nextProfile);
+    setProfileEdit(nextProfile);
+    setForm((current) => ({
+      ...current,
+      phone: current.phone || nextProfile.phone || "",
+    }));
+
+    if (data?.user && transporterSession) {
+      setTransporterSession({ ...transporterSession, user: data.user });
+    }
+
+    setMessage({
+      type: "success",
+      text: "Perfil actualizado. La empresa y el contacto nuevos se usaran en las proximas reservas.",
+    });
+  }
+
   async function logoutTransporter() {
     if (supabase) await supabase.auth.signOut();
     if (canUseLocalStorage()) {
@@ -1180,6 +1244,7 @@ export default function App() {
     setTransporterSession(null);
     setTransporterEmail("");
     setTransporterProfile({ company: "", fullName: "", phone: "" });
+    setProfileEdit({ company: "", fullName: "", phone: "" });
     setAuthForm({ email: "", password: "", repeatPassword: "", newPassword: "", repeatNewPassword: "", company: "", fullName: "", phone: "" });
     setMessage(null);
     setBookingLimitWarning(false);
@@ -1441,6 +1506,82 @@ export default function App() {
       setReservations(nextReservations);
       if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
       setMessage({ type: "success", text: "Reserva " + id + " cancelada correctamente." });
+      if (isSupabaseConfigured()) await loadReservations();
+    } catch (error) {
+      setMessage({ type: "error", text: error.message });
+    }
+  }
+
+  async function moveReservationToCounter(id, counterIndex) {
+    const targetReservation = reservations.find((reservation) => reservation.id === id);
+    if (!targetReservation) return;
+
+    const targetCounterIndex = Number(counterIndex);
+    const capacity = getDeliveryCounterConfig(config).counters;
+
+    if (!Number.isInteger(targetCounterIndex) || targetCounterIndex < 0) {
+      setMessage({ type: "error", text: "Mostrador seleccionado no valido." });
+      return;
+    }
+
+    if (targetCounterIndex >= capacity) {
+      setMessage({ type: "error", text: "Ese mostrador no esta disponible." });
+      return;
+    }
+
+    const counterStart = targetReservation.counterStart || targetReservation.time;
+    const counterEnd = getCounterEndForReservation(targetReservation);
+
+    const occupied = reservations.some((reservation) => {
+      if (reservation.id === id || !isActiveDeliveryReservation(reservation) || reservation.date !== targetReservation.date) return false;
+      if (Number(reservation.counterIndex || 0) !== targetCounterIndex) return false;
+      const reservationStart = reservation.counterStart || reservation.time;
+      const reservationEnd = getCounterEndForReservation(reservation);
+      return intervalsOverlap(counterStart, counterEnd, reservationStart, reservationEnd);
+    });
+
+    if (occupied) {
+      setMessage({ type: "error", text: "Ese mostrador ya esta ocupado durante la ventana de atencion. Elige otro mostrador." });
+      return;
+    }
+
+    const currentMeta = parseReservationNotes(targetReservation.rawNotes || targetReservation.notes || "");
+    const nextNotes = buildReservationNotes({
+      ...currentMeta,
+      notesText: targetReservation.notes || currentMeta.notesText || "",
+      deliveryType: targetReservation.deliveryType || currentMeta.deliveryType || "",
+      deliverySubtype: targetReservation.deliverySubtype || currentMeta.deliverySubtype || "",
+      awbQuantityRange: targetReservation.awbQuantityRange || currentMeta.awbQuantityRange || "",
+      counterDuration: targetReservation.counterDuration || currentMeta.counterDuration || 0,
+      deliveryDockDuration: targetReservation.deliveryDockDuration || currentMeta.deliveryDockDuration || 0,
+      counterStart,
+      counterEnd,
+      counterBlockEnd: targetReservation.counterBlockEnd || currentMeta.counterBlockEnd || "",
+      deliveryDockStart: targetReservation.deliveryDockStart || currentMeta.deliveryDockStart || getCounterEndForReservation(targetReservation),
+      deliveryDockEnd: targetReservation.deliveryDockEnd || currentMeta.deliveryDockEnd || getDeliveryDockEndForReservation(targetReservation),
+      counterIndex: targetCounterIndex,
+      deliveryDockIndex: Number(
+        Number.isFinite(Number(targetReservation.deliveryDockIndex))
+          ? targetReservation.deliveryDockIndex
+          : targetReservation.dockIndex || currentMeta.deliveryDockIndex || 0
+      ),
+    });
+
+    try {
+      const updatedReservation = await updateReservationInDb(id, { notes: nextNotes });
+      const localUpdated = {
+        ...targetReservation,
+        counterIndex: targetCounterIndex,
+        rawNotes: nextNotes,
+        notes: targetReservation.notes || "",
+      };
+      const nextReservations = updatedReservation
+        ? upsertReservationInList(reservations, updatedReservation)
+        : upsertReservationInList(reservations, localUpdated);
+
+      setReservations(nextReservations);
+      if (!isSupabaseConfigured()) saveLocalReservations(nextReservations);
+      setMessage({ type: "success", text: "Reserva " + id + " movida al Mostrador " + dockName(targetCounterIndex) + "." });
       if (isSupabaseConfigured()) await loadReservations();
     } catch (error) {
       setMessage({ type: "error", text: error.message });
@@ -1768,6 +1909,42 @@ export default function App() {
     );
   }
 
+  function handleGanttDragStart(event, reservationId, resourceType) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", JSON.stringify({ reservationId, resourceType }));
+  }
+
+  async function handleGanttDrop(event, targetResourceType, targetResourceIndex) {
+    event.preventDefault();
+
+    let dragInfo = null;
+    try {
+      dragInfo = JSON.parse(event.dataTransfer.getData("text/plain") || "{}");
+    } catch (error) {
+      dragInfo = null;
+    }
+
+    if (!dragInfo?.reservationId) return;
+
+    if (dragInfo.resourceType !== targetResourceType) {
+      setMessage({
+        type: "error",
+        text:
+          targetResourceType === "counter"
+            ? "Arrastra una barra de mostrador sobre otro mostrador."
+            : "Arrastra una barra de muelle de entrega sobre otro muelle de entrega.",
+      });
+      return;
+    }
+
+    if (targetResourceType === "counter") {
+      await moveReservationToCounter(dragInfo.reservationId, targetResourceIndex);
+      return;
+    }
+
+    await moveReservationToDock(dragInfo.reservationId, targetResourceIndex);
+  }
+
   function renderResourceGantt(title, resources, reservationsForGantt, resourceType) {
     const counter = getDeliveryCounterConfig(config);
     const startMinutes = timeToMinutes(counter.startTime);
@@ -1796,7 +1973,15 @@ export default function App() {
           </div>
 
           {Array.from({ length: resources }).map((_, resourceIndex) => (
-            <div style={rs.ganttRow} key={resourceIndex}>
+            <div
+              style={rs.ganttRow}
+              key={resourceIndex}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => handleGanttDrop(event, resourceType, resourceIndex)}
+            >
               <div style={{ padding: 12, fontWeight: 800, background: "#f8fafc" }}>
                 {resourceType === "counter" ? "Mostrador " : "Muelle entrega "}{dockName(resourceIndex)}
               </div>
@@ -1840,6 +2025,8 @@ export default function App() {
                         key={reservation.id + resourceType}
                         title={tooltip}
                         aria-label={tooltip}
+                        draggable
+                        onDragStart={(event) => handleGanttDragStart(event, reservation.id, resourceType)}
                         style={{
                           position: "absolute",
                           left: realLeft + "%",
@@ -1852,7 +2039,7 @@ export default function App() {
                           border: "1px solid #94a3b8",
                           overflow: "hidden",
                           boxSizing: "border-box",
-                          cursor: "help",
+                          cursor: "grab",
                         }}
                       >
                         {resourceType === "counter" && (
@@ -2090,7 +2277,7 @@ export default function App() {
                     <button key={slot.time} disabled={slot.full} style={compactSlotStyle} onClick={() => selectTransporterSlot(slot.time)}>
                       <strong style={{ display: "block", fontSize: 20, lineHeight: 1 }}>{slot.time}</strong>
                       <span style={{ display: "block", fontSize: 13, fontWeight: 800 }}>
-                        {slot.full ? "Ocupado" : "Disponible"}
+                        {slot.full ? "No disponible" : "Disponible"}
                       </span>
                     </button>
                   );
@@ -2125,6 +2312,33 @@ export default function App() {
           </div>
 
           {message && <div ref={messageRef} style={message.type === "success" ? rs.success : rs.error}>{message.text}</div>}
+
+          <div style={{ ...rs.rangeCard, marginTop: 0, marginBottom: 18 }}>
+            <h3 style={{ margin: "0 0 8px" }}>Datos de mi perfil</h3>
+            <p style={{ ...rs.muted, marginTop: 0 }}>Estos datos se rellenaran automaticamente en tus proximas reservas.</p>
+
+            <div style={rs.configGrid}>
+              <label style={rs.label}>
+                Empresa transportista
+                <input style={rs.input} value={profileEdit.company} onChange={(event) => updateProfileEdit("company", event.target.value)} placeholder="Nombre de la empresa" />
+              </label>
+
+              <label style={rs.label}>
+                Nombre y apellidos contacto
+                <input style={rs.input} value={profileEdit.fullName} onChange={(event) => updateProfileEdit("fullName", event.target.value)} placeholder="Nombre y apellidos" />
+              </label>
+
+              <label style={rs.label}>
+                Telefono opcional
+                <input style={rs.input} value={profileEdit.phone} onChange={(event) => updateProfileEdit("phone", event.target.value)} placeholder="Telefono de contacto" />
+              </label>
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <button style={rs.primaryButton} onClick={saveTransporterProfile}>Guardar cambios de perfil</button>
+            </div>
+          </div>
+
           <h3 style={{ marginTop: 0, textTransform: "capitalize" }}>{getMonthTitle(profileMonth)}</h3>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, marginBottom: 8, color: "#64748b", fontWeight: 800, textAlign: "center" }}>
@@ -2284,7 +2498,7 @@ export default function App() {
           <div style={rs.sectionHeader}>
             <div>
               <h2 style={{ margin: 0 }}>Gantt de ocupacion por muelle</h2>
-              <p style={rs.muted}>Vista de ocupacion por muelle. Puedes reasignar manualmente reservas entre Muelle A, B, C, D...</p>
+              <p style={rs.muted}>Arrastra una barra de mostrador a otro mostrador, o una barra de muelle de entrega a otro muelle. La app bloqueara el movimiento si el destino ya esta ocupado.</p>
             </div>
             <label style={{ ...rs.label, marginTop: 0, minWidth: isMobile ? "100%" : 180 }}>
               Fecha
